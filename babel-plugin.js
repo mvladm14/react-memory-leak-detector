@@ -5,8 +5,17 @@
  * so they become identifiable in Chrome DevTools heap snapshots.
  *
  * How it works:
- * 1. At the top of each component body, injects:
- *      var _heap_ = new (function ComponentName$Heap() {})();
+ * 1. At the top of each component body, injects a useRef-stabilized marker
+ *    that survives across renders (one per component instance, not per
+ *    render — otherwise the unmount effect's `[]` deps would only ever
+ *    track render-1's marker and miss leaks anchored to later-render
+ *    closures):
+ *      var _heap_ref_ = __heap_useRef(null);
+ *      if (_heap_ref_.current === null) {
+ *        _heap_ref_.current = new (function ComponentName$Heap() {})();
+ *        window.__heapTracker?.track(_heap_ref_.current, "ComponentName");
+ *      }
+ *      var _heap_ = _heap_ref_.current;
  *
  * 2. Into every nested closure (arrows, function expressions), injects:
  *      _heap_ && 0;
@@ -192,9 +201,10 @@ module.exports = function babelPluginHeapMarkers({ types: t }, options = {}) {
     return fnPath.get("body");
   }
 
-  // Local alias we import as `import { useEffect as USE_EFFECT_ALIAS } from "react"`.
-  // Renamed to avoid colliding with any user-defined `useEffect` in the file.
+  // Local aliases we import from React under renamed names so they can't
+  // collide with anything a user might define in the same file.
   const USE_EFFECT_ALIAS = "__heap_useEffect";
+  const USE_REF_ALIAS = "__heap_useRef";
 
   /**
    * Builds: window.__heapTracker && window.__heapTracker.<method>(_heap_)
@@ -256,22 +266,36 @@ module.exports = function babelPluginHeapMarkers({ types: t }, options = {}) {
 
   /**
    * Injects a heap marker declaration at the top of the component body,
-   * plus the live-tracker hook call and (when react is available) an
+   * plus the live-tracker registration and (unless opted out) an
    * unmount-detecting useEffect.
    *
+   * The marker is stabilized across renders via useRef: it's created once
+   * on first render and reused on every subsequent render. Without this,
+   * `var _heap_ = new (...)()` would re-run every render and only render-1's
+   * marker would receive markMounted/markUnmounted (the effect has `[]` deps),
+   * so leaks from later renders' closures would never trigger a live warning.
+   *
    * Generates:
-   *   var _heap_ = new (function ComponentName$Heap() {})();
-   *   typeof window !== "undefined" && window.__heapTracker
-   *     && window.__heapTracker.track(_heap_, "ComponentName");
+   *   var _heap_ref_ = __heap_useRef(null);
+   *   if (_heap_ref_.current === null) {
+   *     _heap_ref_.current = new (function ComponentName$Heap() {})();
+   *     typeof window !== "undefined" && window.__heapTracker
+   *       && window.__heapTracker.track(_heap_ref_.current, "ComponentName");
+   *   }
+   *   var _heap_ = _heap_ref_.current;
    *   __heap_useEffect(() => {
    *     window.__heapTracker && window.__heapTracker.markMounted(_heap_);
    *     return () =>
    *       window.__heapTracker && window.__heapTracker.markUnmounted(_heap_);
    *   }, []);
    *
-   * The marker constructor is registered in markerConstructors WeakSet
-   * so the FunctionExpression visitor can skip it. The closures inside the
-   * useEffect get processed by the Phase-2 visitors normally — that's fine.
+   * `_heap_` keeps its original identifier so the Phase-2 `_heap_ && 0`
+   * injector continues to capture the (now stable) marker into nested
+   * closures unchanged.
+   *
+   * The marker constructor is registered in markerConstructors WeakSet so
+   * the FunctionExpression visitor skips it. Closures inside the useEffect
+   * get processed by Phase-2 normally — harmless.
    */
   function injectMarkerVariable(bodyPath, componentName, state) {
     const markerName = `${componentName}$Heap`;
@@ -286,16 +310,32 @@ module.exports = function babelPluginHeapMarkers({ types: t }, options = {}) {
     // Register the marker constructor so it gets skipped by the FunctionExpression visitor
     markerConstructors.add(markerFnExpr);
 
-    // var _heap_ = new (function ComponentName$Heap() {})();
-    const markerDeclaration = t.variableDeclaration("var", [
+    // var _heap_ref_ = __heap_useRef(null);
+    const refDeclaration = t.variableDeclaration("var", [
       t.variableDeclarator(
-        t.identifier("_heap_"),
-        t.newExpression(markerFnExpr, [])
+        t.identifier("_heap_ref_"),
+        t.callExpression(t.identifier(USE_REF_ALIAS), [t.nullLiteral()])
       ),
     ]);
 
+    // _heap_ref_.current
+    const refCurrent = () =>
+      t.memberExpression(
+        t.identifier("_heap_ref_"),
+        t.identifier("current")
+      );
+
+    // _heap_ref_.current = new (function ComponentName$Heap() {})();
+    const assignMarker = t.expressionStatement(
+      t.assignmentExpression(
+        "=",
+        refCurrent(),
+        t.newExpression(markerFnExpr, [])
+      )
+    );
+
     // typeof window !== "undefined" && window.__heapTracker
-    //   && window.__heapTracker.track(_heap_, "ComponentName");
+    //   && window.__heapTracker.track(_heap_ref_.current, "ComponentName");
     const trackerCall = t.expressionStatement(
       t.logicalExpression(
         "&&",
@@ -318,24 +358,33 @@ module.exports = function babelPluginHeapMarkers({ types: t }, options = {}) {
               ),
               t.identifier("track")
             ),
-            [t.identifier("_heap_"), t.stringLiteral(componentName)]
+            [refCurrent(), t.stringLiteral(componentName)]
           )
         )
       )
     );
 
-    const statements = [markerDeclaration, trackerCall];
+    // if (_heap_ref_.current === null) { _heap_ref_.current = new …; track(); }
+    const initBlock = t.ifStatement(
+      t.binaryExpression("===", refCurrent(), t.nullLiteral()),
+      t.blockStatement([assignMarker, trackerCall])
+    );
 
-    // Only inject the useEffect when the file is React-aware. Files that
-    // happen to define `^use[A-Z]` utilities without importing React are
-    // not real hooks — calling useEffect there would crash at runtime.
-    // Also skip components opted out via excludeUnmountTracking (e.g. those
-    // managed by <Activity mode="hidden">, whose cleanup fires while the
-    // fiber is still alive — would cause false positives).
-    if (
-      state.fileImportsReact &&
-      !isExcludedFromUnmountTracking(componentName)
-    ) {
+    // var _heap_ = _heap_ref_.current;
+    const heapAlias = t.variableDeclaration("var", [
+      t.variableDeclarator(t.identifier("_heap_"), refCurrent()),
+    ]);
+
+    const statements = [refDeclaration, initBlock, heapAlias];
+    // eslint-disable-next-line no-param-reassign
+    state.needsHeapUseRefImport = true;
+
+    // Skip the lifecycle effect for components opted out via
+    // excludeUnmountTracking (e.g. those managed by <Activity mode="hidden">,
+    // whose cleanup fires while the fiber is still alive — would cause false
+    // positives). The marker + track() still happen, so the component remains
+    // searchable in heap snapshots.
+    if (!isExcludedFromUnmountTracking(componentName)) {
       statements.push(buildUnmountEffect());
       // eslint-disable-next-line no-param-reassign
       state.needsHeapUseEffectImport = true;
@@ -408,9 +457,12 @@ module.exports = function babelPluginHeapMarkers({ types: t }, options = {}) {
           /* eslint-disable no-param-reassign */
           state.fileImportsReact = programPath.node.body.some(
             (node) =>
-              t.isImportDeclaration(node) && node.source.value === "react"
+              t.isImportDeclaration(node) &&
+              node.source.value === "react" &&
+              node.importKind !== "type"
           );
           state.needsHeapUseEffectImport = false;
+          state.needsHeapUseRefImport = false;
 
           // When skipServerComponents is on, instrument only files that have
           // a top-level "use client" directive. Server components can't call
@@ -427,29 +479,45 @@ module.exports = function babelPluginHeapMarkers({ types: t }, options = {}) {
           /* eslint-enable no-param-reassign */
         },
         exit(programPath, state) {
-          if (!state.needsHeapUseEffectImport) return;
-
-          const specifier = t.importSpecifier(
-            t.identifier(USE_EFFECT_ALIAS),
-            t.identifier("useEffect")
-          );
+          const specifiers = [];
+          if (state.needsHeapUseRefImport) {
+            specifiers.push(
+              t.importSpecifier(
+                t.identifier(USE_REF_ALIAS),
+                t.identifier("useRef")
+              )
+            );
+          }
+          if (state.needsHeapUseEffectImport) {
+            specifiers.push(
+              t.importSpecifier(
+                t.identifier(USE_EFFECT_ALIAS),
+                t.identifier("useEffect")
+              )
+            );
+          }
+          if (specifiers.length === 0) return;
 
           // Try to attach to an existing react import. Skip ones that use a
           // namespace specifier (`import * as React from "react"`) — you can't
           // mix `* as X` with named specifiers in the same declaration.
+          // Also skip type-only imports (`import type {...} from "react"`),
+          // which Babel's TS transform strips wholesale, taking our added
+          // value specifiers with them.
           const reuseTarget = programPath.node.body.find(
             (node) =>
               t.isImportDeclaration(node) &&
               node.source.value === "react" &&
+              node.importKind !== "type" &&
               !node.specifiers.some((s) => t.isImportNamespaceSpecifier(s))
           );
 
           if (reuseTarget) {
-            reuseTarget.specifiers.push(specifier);
+            reuseTarget.specifiers.push(...specifiers);
           } else {
             programPath.unshiftContainer(
               "body",
-              t.importDeclaration([specifier], t.stringLiteral("react"))
+              t.importDeclaration(specifiers, t.stringLiteral("react"))
             );
           }
         },
@@ -462,6 +530,10 @@ module.exports = function babelPluginHeapMarkers({ types: t }, options = {}) {
       // Handle: function useMyHook() { ... }
       FunctionDeclaration(fnPath, state) {
         if (state.skipFile) return;
+        // The injected marker uses useRef + useEffect, so files that don't
+        // import React can't be instrumented. Also filters out `use*`-named
+        // utilities in non-React files that aren't actually hooks.
+        if (!state.fileImportsReact) return;
         const name = fnPath.node.id?.name;
         if (!name) return;
         if (isExcludedName(name)) return;
@@ -488,6 +560,7 @@ module.exports = function babelPluginHeapMarkers({ types: t }, options = {}) {
       // Handle: const useMyHook = () => { ... }
       VariableDeclarator(varPath, state) {
         if (state.skipFile) return;
+        if (!state.fileImportsReact) return;
         const name = varPath.node.id?.name;
         if (!name) return;
         if (isExcludedName(name)) return;

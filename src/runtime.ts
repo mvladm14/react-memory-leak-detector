@@ -73,8 +73,9 @@ function markMounted(instance: object): void {
 function markUnmounted(instance: object): void {
   const entry = instanceToEntry.get(instance);
   if (!entry) return;
+  if (entry.mountCount === 0) return;
   entry.mountCount -= 1;
-  if (entry.mountCount <= 0) entry.unmountedAt = Date.now();
+  if (entry.mountCount === 0) entry.unmountedAt = Date.now();
 }
 
 function bucketLiveEntries(): Map<string, { stale: number; live: number }> {
