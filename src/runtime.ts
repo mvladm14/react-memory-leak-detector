@@ -21,10 +21,29 @@ type ComponentStats = {
   lastWarnedAt: number;
 };
 
-const LEAK_AGE_MS = 10_000;
-const SUSPECT_THRESHOLD = 1;
-const SWEEP_INTERVAL_MS = 2_000;
-const WARN_COOLDOWN_MS = 30_000;
+let _config = {
+  logging: true,
+  leakAgeMs: 10_000,
+  suspectThreshold: 1,
+  sweepIntervalMs: 2_000,
+  warnCooldownMs: 30_000,
+};
+
+if (typeof window !== "undefined" && (window as any).__heapTrackerOptions) {
+  Object.assign(_config, (window as any).__heapTrackerOptions);
+}
+
+function configure(options: Partial<typeof _config>): void {
+  const oldInterval = _config.sweepIntervalMs;
+  Object.assign(_config, options);
+  if (options.sweepIntervalMs && options.sweepIntervalMs !== oldInterval) {
+    if (intervalId !== null) {
+      clearInterval(intervalId);
+      intervalId = null;
+      startSweepLoop();
+    }
+  }
+}
 
 const live = new Set<LiveEntry>();
 const stats = new Map<string, ComponentStats>();
@@ -95,7 +114,7 @@ function bucketLiveEntries(): Map<string, { stale: number; live: number }> {
     bucket.live += 1;
     if (
       entry.unmountedAt != null &&
-      now - entry.unmountedAt >= LEAK_AGE_MS
+      now - entry.unmountedAt >= _config.leakAgeMs
     ) {
       bucket.stale += 1;
     }
@@ -110,13 +129,15 @@ function sweep(): void {
 
   perName.forEach((bucket, name) => {
     const s = getStats(name);
-    const cooldownPassed = now - s.lastWarnedAt > WARN_COOLDOWN_MS;
-    if (bucket.stale >= SUSPECT_THRESHOLD && cooldownPassed) {
+    const cooldownPassed = now - s.lastWarnedAt > _config.warnCooldownMs;
+    if (bucket.stale >= _config.suspectThreshold && cooldownPassed) {
       s.lastWarnedAt = now;
-      // eslint-disable-next-line no-console
-      console.warn(
-        `[heap-leak] Suspected leak: ${name} — ${bucket.stale} instance(s) unmounted >${LEAK_AGE_MS / 1000}s ago still retained (live ${bucket.live} total)`
-      );
+      if (_config.logging) {
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[heap-leak] Suspected leak: ${name} — ${bucket.stale} instance(s) unmounted >${_config.leakAgeMs / 1000}s ago still retained (live ${bucket.live} total)`,
+        );
+      }
     }
   });
 }
@@ -144,8 +165,11 @@ function report(): ReportRow[] {
   });
 
   rows.sort((a, b) => b.stale - a.stale || b.live - a.live);
-  // eslint-disable-next-line no-console
-  console.table(rows);
+
+  if (_config.logging) {
+    // eslint-disable-next-line no-console
+    console.table(rows);
+  }
   return rows;
 }
 
@@ -153,18 +177,30 @@ function forceGc(): void {
   const w = window as typeof window & { gc?: () => void };
   if (typeof w.gc === "function") {
     w.gc();
-    // eslint-disable-next-line no-console
-    console.info("[heap-leak] window.gc() invoked; re-sweeping.");
+    if (_config.logging) {
+      // eslint-disable-next-line no-console
+      console.info("[heap-leak] window.gc() invoked; re-sweeping.");
+    }
   } else {
-    // eslint-disable-next-line no-console
-    console.info(
-      '[heap-leak] window.gc not available. Start Chrome with --js-flags="--expose-gc" to enable.'
-    );
+    if (_config.logging) {
+      // eslint-disable-next-line no-console
+      console.info(
+        '[heap-leak] window.gc not available. Start Chrome with --js-flags="--expose-gc" to enable.',
+      );
+    }
   }
   sweep();
 }
 
-const api = { track, markMounted, markUnmounted, sweep, report, forceGc };
+const api = {
+  track,
+  markMounted,
+  markUnmounted,
+  sweep,
+  report,
+  forceGc,
+  configure,
+};
 
 declare global {
   interface Window {
@@ -172,21 +208,32 @@ declare global {
   }
 }
 
-window.__heapTracker = api;
+if (typeof window !== "undefined") {
+  window.__heapTracker = api;
+}
 
 export {};
 
 let intervalId: ReturnType<typeof setInterval> | null = null;
 function startSweepLoop(): void {
+  if (typeof document === "undefined") return;
   if (intervalId !== null) return;
   intervalId = setInterval(() => {
-    if (document.visibilityState === "visible") sweep();
-  }, SWEEP_INTERVAL_MS);
+    if (
+      typeof document !== "undefined" &&
+      document.visibilityState === "visible"
+    )
+      sweep();
+  }, _config.sweepIntervalMs);
 }
 
-startSweepLoop();
+if (typeof window !== "undefined") {
+  startSweepLoop();
 
-// eslint-disable-next-line no-console
-console.info(
-  "[heap-leak] tracker installed. Run window.__heapTracker.report() for a live table."
-);
+  if (_config.logging) {
+    // eslint-disable-next-line no-console
+    console.info(
+      "[heap-leak] tracker installed. Run window.__heapTracker.report() for a live table.",
+    );
+  }
+}

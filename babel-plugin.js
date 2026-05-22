@@ -77,6 +77,9 @@
  *                              server components can't call useEffect, so
  *                              injecting it would crash at module-load time.
  *                              Default: false.
+ *   logging                  — When false, disables console warnings at runtime
+ *                              while still tracking.
+ *                              Default: true.
  *
  * Components additionally require a .jsx/.tsx extension and a JSX element in
  * the body — that's structural, not a config option.
@@ -88,6 +91,11 @@ module.exports = function babelPluginHeapMarkers({ types: t }, options = {}) {
     excludeUnmountTracking = [],
     trackHooks = true,
     skipServerComponents = false,
+    logging = true,
+    leakAgeMs = 10000,
+    suspectThreshold = 1,
+    sweepIntervalMs = 2000,
+    warnCooldownMs = 30000,
   } = options;
 
   // Track function nodes that ARE components or hooks (don't inject _heap_ && 0 into them)
@@ -96,7 +104,7 @@ module.exports = function babelPluginHeapMarkers({ types: t }, options = {}) {
   const markerConstructors = new WeakSet();
 
   function isPascalCase(name) {
-    return /^[A-Z][a-zA-Z0-9]*$/.test(name);
+    return /^[A-Z]\w*$/.test(name);
   }
 
   function isCustomHook(name) {
@@ -128,11 +136,13 @@ module.exports = function babelPluginHeapMarkers({ types: t }, options = {}) {
   function containsJSX(nodePath) {
     let found = false;
     nodePath.traverse({
-      JSXElement() {
+      JSXElement(path) {
         found = true;
+        path.stop();
       },
-      JSXFragment() {
+      JSXFragment(path) {
         found = true;
+        path.stop();
       },
     });
     return found;
@@ -209,23 +219,31 @@ module.exports = function babelPluginHeapMarkers({ types: t }, options = {}) {
   /**
    * Builds: window.__heapTracker && window.__heapTracker.<method>(_heap_)
    */
-  function buildTrackerMemberCall(method) {
+  function buildTrackerMemberCall(method, args = [t.identifier("_heap_")]) {
     return t.expressionStatement(
       t.logicalExpression(
         "&&",
-        t.memberExpression(
-          t.identifier("window"),
-          t.identifier("__heapTracker")
+        t.binaryExpression(
+          "!==",
+          t.unaryExpression("typeof", t.identifier("window"), true),
+          t.stringLiteral("undefined")
         ),
-        t.callExpression(
+        t.logicalExpression(
+          "&&",
           t.memberExpression(
-            t.memberExpression(
-              t.identifier("window"),
-              t.identifier("__heapTracker")
-            ),
-            t.identifier(method)
+            t.identifier("window"),
+            t.identifier("__heapTracker")
           ),
-          [t.identifier("_heap_")]
+          t.callExpression(
+            t.memberExpression(
+              t.memberExpression(
+                t.identifier("window"),
+                t.identifier("__heapTracker")
+              ),
+              t.identifier(method)
+            ),
+            args
+          )
         )
       )
     );
@@ -336,33 +354,10 @@ module.exports = function babelPluginHeapMarkers({ types: t }, options = {}) {
 
     // typeof window !== "undefined" && window.__heapTracker
     //   && window.__heapTracker.track(_heap_ref_.current, "ComponentName");
-    const trackerCall = t.expressionStatement(
-      t.logicalExpression(
-        "&&",
-        t.binaryExpression(
-          "!==",
-          t.unaryExpression("typeof", t.identifier("window"), true),
-          t.stringLiteral("undefined")
-        ),
-        t.logicalExpression(
-          "&&",
-          t.memberExpression(
-            t.identifier("window"),
-            t.identifier("__heapTracker")
-          ),
-          t.callExpression(
-            t.memberExpression(
-              t.memberExpression(
-                t.identifier("window"),
-                t.identifier("__heapTracker")
-              ),
-              t.identifier("track")
-            ),
-            [refCurrent(), t.stringLiteral(componentName)]
-          )
-        )
-      )
-    );
+    const trackerCall = buildTrackerMemberCall("track", [
+      refCurrent(),
+      t.stringLiteral(componentName),
+    ]);
 
     // if (_heap_ref_.current === null) { _heap_ref_.current = new …; track(); }
     const initBlock = t.ifStatement(
@@ -441,7 +436,9 @@ module.exports = function babelPluginHeapMarkers({ types: t }, options = {}) {
       (p) =>
         (p.isFunctionDeclaration() ||
           p.isArrowFunctionExpression() ||
-          p.isFunctionExpression()) &&
+          p.isFunctionExpression() ||
+          p.isObjectMethod() ||
+          p.isClassMethod()) &&
         instrumentedFunctions.has(p.node)
     );
 
@@ -479,6 +476,52 @@ module.exports = function babelPluginHeapMarkers({ types: t }, options = {}) {
           /* eslint-enable no-param-reassign */
         },
         exit(programPath, state) {
+          const emitsConfig =
+            logging === false ||
+            leakAgeMs !== 10000 ||
+            suspectThreshold !== 1 ||
+            sweepIntervalMs !== 2000 ||
+            warnCooldownMs !== 30000;
+
+          if (emitsConfig && !state.skipFile) {
+            const configAst = t.ifStatement(
+              t.binaryExpression(
+                "!==",
+                t.unaryExpression("typeof", t.identifier("window")),
+                t.stringLiteral("undefined")
+              ),
+              t.blockStatement([
+                t.expressionStatement(
+                  t.assignmentExpression(
+                    "=",
+                    t.memberExpression(t.identifier("window"), t.identifier("__heapTrackerOptions")),
+                    t.objectExpression([
+                      t.objectProperty(t.identifier("logging"), t.booleanLiteral(logging)),
+                      t.objectProperty(t.identifier("leakAgeMs"), t.numericLiteral(leakAgeMs)),
+                      t.objectProperty(t.identifier("suspectThreshold"), t.numericLiteral(suspectThreshold)),
+                      t.objectProperty(t.identifier("sweepIntervalMs"), t.numericLiteral(sweepIntervalMs)),
+                      t.objectProperty(t.identifier("warnCooldownMs"), t.numericLiteral(warnCooldownMs)),
+                    ])
+                  )
+                ),
+                t.expressionStatement(
+                  t.logicalExpression(
+                    "&&",
+                    t.memberExpression(t.identifier("window"), t.identifier("__heapTracker")),
+                    t.callExpression(
+                      t.memberExpression(
+                        t.memberExpression(t.identifier("window"), t.identifier("__heapTracker")),
+                        t.identifier("configure")
+                      ),
+                      [t.memberExpression(t.identifier("window"), t.identifier("__heapTrackerOptions"))]
+                    )
+                  )
+                )
+              ])
+            );
+            programPath.unshiftContainer("body", configAst);
+          }
+
           const specifiers = [];
           if (state.needsHeapUseRefImport) {
             specifiers.push(
@@ -611,6 +654,22 @@ module.exports = function babelPluginHeapMarkers({ types: t }, options = {}) {
       },
 
       FunctionExpression(fnPath, state) {
+        if (state.skipFile) return;
+        if (!isJSOrTSFile(state.filename)) return;
+        if (shouldInjectVoidHeap(fnPath)) {
+          injectVoidHeap(fnPath);
+        }
+      },
+
+      ObjectMethod(fnPath, state) {
+        if (state.skipFile) return;
+        if (!isJSOrTSFile(state.filename)) return;
+        if (shouldInjectVoidHeap(fnPath)) {
+          injectVoidHeap(fnPath);
+        }
+      },
+
+      ClassMethod(fnPath, state) {
         if (state.skipFile) return;
         if (!isJSOrTSFile(state.filename)) return;
         if (shouldInjectVoidHeap(fnPath)) {

@@ -13,13 +13,18 @@
     "finalizationregistry",
     "debugging"
   ],
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "npm run build",
+    "test": "jest"
+  },
   "exports": {
     "./babel-plugin": "./babel-plugin.js",
-    "./runtime": "./src/runtime.ts"
+    "./runtime": "./dist/runtime.js"
   },
   "files": [
     "babel-plugin.js",
-    "src/runtime.ts",
+    "dist/",
     "README.md"
   ],
   "repository": {
@@ -33,5 +38,10 @@
   },
   "engines": {
     "node": ">=16"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.29.0",
+    "jest": "^30.4.2",
+    "typescript": "^6.0.3"
   }
 }
