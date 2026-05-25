@@ -103,21 +103,20 @@ if (process.env.NODE_ENV === "development") {
 // src/main.tsx
 if (import.meta.env.DEV) {
   import("react-memory-leak-detector/runtime");
+}
+```
+
 The tracker installs `window.__heapTracker` on dev page load. You'll see:
 
 ```
-
-[heap-leak] tracker installed. Run window.\_\_heapTracker.report() for a live table.
-
+[heap-leak] tracker installed. Run window.__heapTracker.report() for a live table.
 ```
 
 Warnings fire automatically as `console.warn`, debounced to once per 30s per component:
 
 ```
-
 [heap-leak] Suspected leak: GapsByPriorityCard — 1 instance(s) unmounted >10s ago still retained (live 1 total)
-
-````
+```
 
 Manual API:
 
@@ -127,6 +126,34 @@ Manual API:
 | `window.__heapTracker.configure()` | Configure runtime options. Example: `configure({ logging: false })` disables all console outputs while continuing tracking.   |
 | `window.__heapTracker.sweep()`     | Force an immediate sweep (otherwise runs every 2s).                                                                           |
 | `window.__heapTracker.forceGc()`   | `window.gc?.()` + re-sweep. Needs Chrome started with `--js-flags="--expose-gc"`. Use it to confirm a flag isn't just GC lag. |
+| `window.__heapTracker.subscribe()` | Subscribe to stale-leak events. Fires only for stale leaks, gated by the same `suspectThreshold` + `warnCooldownMs` as the console warning. Returns an unsubscribe function. |
+
+### Subscribing to leaks
+
+Use `subscribe` when you want to forward stale-leak events somewhere — your own logger, a debug overlay, Sentry, etc. The listener only fires for **stale** leaks (instances unmounted ≥ `leakAgeMs` ago and still reachable), never for currently-mounted or recently-unmounted components.
+
+```ts
+const unsubscribe = window.__heapTracker.subscribe((event) => {
+  // event: { component, stale, live, leakAgeMs, at }
+  console.log(`Leak in ${event.component}: ${event.stale} stale instance(s)`);
+  // e.g. Sentry.captureMessage(`heap-leak:${event.component}`, { extra: event });
+});
+
+// later
+unsubscribe();
+```
+
+Event shape:
+
+| Field        | Type     | Description                                                                       |
+| ------------ | -------- | --------------------------------------------------------------------------------- |
+| `component`  | `string` | Component / hook name. Matches the `ComponentName$Heap` marker in heap snapshots. |
+| `stale`      | `number` | Instances unmounted ≥ `leakAgeMs` ago that are still reachable.                   |
+| `live`       | `number` | Total reachable instances (mounted + recently-unmounted + leaked).                |
+| `leakAgeMs`  | `number` | Threshold used to classify an instance as stale.                                  |
+| `at`         | `number` | `Date.now()` when the event was fired.                                            |
+
+Firing is gated by the same `suspectThreshold` and `warnCooldownMs` as the console warning, so you won't get spammed. To receive events without the console warnings, call `configure({ logging: false })`.
 
 Once a component shows up as stale, take a heap snapshot and search `ComponentName$Heap` → **Retainers** tab to find the offending closure.
 
@@ -162,7 +189,7 @@ heapMarkers({
   sweepIntervalMs: 2000, // how often the GC sweep checks for leaks
   warnCooldownMs: 30000, // how long to wait before warning about the SAME component again
 });
-````
+```
 
 All options are optional with sensible defaults.
 

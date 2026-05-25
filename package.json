@@ -1,6 +1,6 @@
 {
   "name": "react-memory-leak-detector",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Stop hunting memory leaks with heap snapshots. This babel plugin tags every React component and hook with a uniquely-named marker, then a runtime tracker uses WeakRef + FinalizationRegistry to warn you, live in the console, the moment something leaks.",
   "keywords": [
     "react",
@@ -25,7 +25,9 @@
   "files": [
     "babel-plugin.js",
     "dist/",
-    "README.md"
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
   ],
   "repository": {
     "type": "git",
@@ -41,7 +43,10 @@
   },
   "devDependencies": {
     "@babel/core": "^7.29.0",
+    "@types/jest": "^30.0.0",
     "jest": "^30.4.2",
+    "jest-environment-jsdom": "^30.4.1",
+    "ts-jest": "^29.4.11",
     "typescript": "^6.0.3"
   }
 }
