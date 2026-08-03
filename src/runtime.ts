@@ -23,8 +23,9 @@ import { _config, configure, onSweepIntervalChange } from "./config";
 import { markMounted, markUnmounted, track } from "./lifecycle";
 import { forceGc, report, sweep } from "./sweep";
 import { subscribe } from "./subscribers";
+import type { HeapTrackerOptions } from "./types";
 
-export type { LeakEvent, LeakListener } from "./types";
+export type { LeakEvent, LeakListener, HeapTrackerOptions } from "./types";
 
 const api = {
   track,
@@ -40,11 +41,12 @@ const api = {
 declare global {
   interface Window {
     __heapTracker?: typeof api;
+    /**
+     * Set before the runtime loads to configure it without a code import-order
+     * step. The Babel plugin injects this automatically from its options.
+     */
+    __heapTrackerOptions?: Partial<HeapTrackerOptions>;
   }
-}
-
-if (typeof window !== "undefined") {
-  window.__heapTracker = api;
 }
 
 let intervalId: ReturnType<typeof setInterval> | null = null;
@@ -69,11 +71,16 @@ function restartSweepLoop(): void {
   startSweepLoop();
 }
 
-// `configure({ sweepIntervalMs: ... })` needs to restart the loop with the
-// new cadence — config.ts owns the change notification, we own the loop.
-onSweepIntervalChange(restartSweepLoop);
+// Install once. A second evaluation of this module (HMR reload, a duplicate
+// import, or the dep being pulled in under two specifiers) must NOT replace the
+// live tracker with a fresh, empty-state one or start a second sweep loop — the
+// injected markers all call the original `window.__heapTracker`, so we keep it.
+if (typeof window !== "undefined" && !window.__heapTracker) {
+  window.__heapTracker = api;
 
-if (typeof window !== "undefined") {
+  // `configure({ sweepIntervalMs: ... })` needs to restart the loop with the
+  // new cadence — config.ts owns the change notification, we own the loop.
+  onSweepIntervalChange(restartSweepLoop);
   startSweepLoop();
 
   if (_config.logging) {

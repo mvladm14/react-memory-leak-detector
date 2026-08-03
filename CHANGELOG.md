@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-08-03
+
+### Added
+
+- **Shipped TypeScript declarations** for both entry points via the `exports`
+  map (`/babel-plugin`, `/runtime`), so consumers no longer need hand-written
+  ambient `declare module` shims. `babel-plugin.d.ts` exports the
+  `HeapMarkersOptions` type.
+- **Typed `window.__heapTrackerOptions`** on the global `Window` augmentation
+  (alongside the existing `window.__heapTracker`).
+- Regression tests for runtime install (idempotency + pre-load options).
+
+### Fixed
+
+- **Idempotent runtime install.** A second evaluation of the runtime (HMR
+  reload, a duplicate import, or the dep resolved under two specifiers) no
+  longer replaces the live tracker with a fresh, empty-state one, starts a
+  second sweep loop, or re-logs the "tracker installed" message — the original
+  tracker and its accumulated state are kept.
+
+### Changed
+
+- README: added a TypeScript section and a heap-snapshot walkthrough for
+  finding a leak, clarified how build-time vs runtime options are forwarded, and
+  noted that the Vite setup currently requires `@vitejs/plugin-react` v5 (v6+
+  uses Oxc and dropped the `babel` option; first-class v6 support is planned).
+
 ## [1.0.0] - 2026-07-23
 
 First stable release. No breaking changes from 0.2.0 — the public API
@@ -61,6 +88,7 @@ First public release on npm.
   `subscribers`, `sweep`) with `runtime.ts` as the entry that wires the API
   and starts the sweep loop. No change to the public surface.
 
-[Unreleased]: https://github.com/mvladm14/react-memory-leak-detector/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/mvladm14/react-memory-leak-detector/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/mvladm14/react-memory-leak-detector/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/mvladm14/react-memory-leak-detector/compare/v0.2.0...v1.0.0
 [0.2.0]: https://github.com/mvladm14/react-memory-leak-detector/releases/tag/v0.2.0
