@@ -17,8 +17,8 @@
 
 import { execSync } from "node:child_process";
 import { readdirSync, rmSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const E2E = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(E2E, "..");
@@ -52,11 +52,11 @@ if (!process.env.SKIP_INSTALL) {
   if (!tgz) throw new Error("npm pack produced no tarball");
 
   console.log("→ Installing fixture deps + the packed detector…");
-  sh("npm install", FIXTURE);
-  sh(`npm install --no-save "${path.join(E2E, tgz)}"`, FIXTURE);
+  sh("npm install --legacy-peer-deps", FIXTURE);
+  sh(`npm install --no-save --legacy-peer-deps "${path.join(E2E, tgz)}"`, FIXTURE);
 
   console.log("→ Installing Playwright + Chromium…");
-  sh("npm install", E2E);
+  sh("npm install --legacy-peer-deps", E2E);
   // Browser download is a fast no-op when the (version-matched) binary already
   // exists — e.g. baked into the Docker image.
   sh("npx playwright install chromium", E2E);
