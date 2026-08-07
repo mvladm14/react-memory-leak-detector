@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 
 /** FixedTimer - properly clears setInterval on unmount. */
 export function FixedTimer() {
