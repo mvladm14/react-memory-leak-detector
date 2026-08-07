@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-08-07
+
+### Changed
+
+- **Optimized install-time file footprint**: Moved `@babel/core` from `dependencies` to `peerDependencies` with `optional: true` in `peerDependenciesMeta`. Modern Vite or Non-Babel users now avoid downloading ~10–15 MB of compiler transitive dependency trees in their `node_modules` during installation.
+- `@babel/core` is now conditionally and lazily dynamic-loaded in the build plugins, resolving and loading only when explicit `"babel"` compilation engine transforms are executed, outputting clean actionable failures when unavailable.
+
 ## [1.2.0] - 2026-08-07
 
 ### Added
@@ -141,7 +148,7 @@ First public release on npm.
   actually unmounts. StrictMode-aware via a mount counter.
 - **`window.__heapTracker.subscribe(listener)`** — programmatic subscription
   to stale-leak events. Listener fires with `{ component, stale, live,
-  leakAgeMs, at }` only for stale leaks (instances unmounted ≥ `leakAgeMs` ago
+leakAgeMs, at }` only for stale leaks (instances unmounted ≥ `leakAgeMs` ago
   and still reachable), gated by the same `suspectThreshold` and
   `warnCooldownMs` as the console warning. Returns an unsubscribe function.
 - **`window.__heapTracker.report()`** — `console.table` snapshot of every
