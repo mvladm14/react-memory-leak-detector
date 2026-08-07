@@ -1,9 +1,6 @@
 import { useEffect, useState } from "react";
 
-/**
- * Fixed twin of LeakyListeners. Remedied by removing the scroll/mousemove event
- * listeners from the window on unmount.
- */
+/** FixedListeners - removes mousemove event listener on unmount. */
 export function FixedListeners() {
   const [coords, setCoords] = useState({ x: 0, y: 0 });
 

@@ -11,10 +11,7 @@ declare global {
   }
 }
 
-/**
- * Fixed twin of LeakyPromise. On unmount, it rejects the promise and removes the
- * resolve/reject references from the global list, allowing everything to be garbage collected.
- */
+/** FixedPromise - aborts/rejects promise and cleans up global lists on unmount. */
 export function FixedPromise() {
   const [data, setData] = useState("pending...");
 

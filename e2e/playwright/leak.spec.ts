@@ -34,19 +34,19 @@ test.describe(`live leak detection — ${COMBO}`, () => {
 
     await page.goto("/");
 
-    // The build plugin injected markers and the runtime installed.
+    // Build plugin injected markers and runtime installed.
     await page.waitForFunction(
       () => !!window.__heapTracker && !!window.__leakTest,
     );
 
-    // ── 1) Leaky: mount then unmount, then force GC and poll for a verdict. ──
+    // ── 1) Leaky: mount then unmount ──
     await page.getByTestId("toggle-leaky").click(); // mount
     await expect(page.getByTestId("leaky")).toBeVisible();
     await page.getByTestId("toggle-leaky").click(); // unmount
     await expect(page.getByTestId("leaky")).toHaveCount(0);
 
     const leaky = await page.evaluate(async () => {
-      // Poll: forceGc a few cycles, check for a LeakyTimer event, repeat.
+      // Poll: forceGc, check for a LeakyTimer event.
       for (let i = 0; i < 15; i++) {
         const { events } = await window.__leakTest!.collect(3);
         if (events.some((e) => e.component === "LeakyTimer")) return true;
@@ -57,7 +57,7 @@ test.describe(`live leak detection — ${COMBO}`, () => {
       true,
     );
 
-    // ── 2) Fixed: mount then unmount; it must be collected, never flagged. ──
+    // ── 2) Fixed: mount then unmount; must be collected without warning. ──
     await page.getByTestId("toggle-fixed").click(); // mount
     await expect(page.getByTestId("fixed")).toBeVisible();
     await page.getByTestId("toggle-fixed").click(); // unmount

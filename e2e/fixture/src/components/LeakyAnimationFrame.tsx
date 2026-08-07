@@ -1,11 +1,6 @@
 import { useEffect, useState } from "react";
 
-/**
- * Leaks on purpose: a `requestAnimationFrame` loop whose effect returns NO cleanup.
- * On unmount, the pending frame resolves and starts another frame, holding onto
- * the component (and its injected `_heap_` marker) forever in the browser runtime's
- * animation callbacks registry.
- */
+/** LeakyAnimationFrame - requestAnimationFrame loop leak with no cleanup. */
 export function LeakyAnimationFrame() {
   const [frames, setFrames] = useState(0);
 

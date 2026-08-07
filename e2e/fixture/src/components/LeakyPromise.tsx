@@ -10,12 +10,7 @@ declare global {
   }
 }
 
-/**
- * Leaks on purpose: Starts a promise that does not settle, and keeps the resolve
- * function callback held in a global Set. Since the resolve callback is globally
- * referenced and never called, the Promise reactions (.then callbacks) remain
- * active and keep the component closure and its `_heap_` marker from being GC'd.
- */
+/** LeakyPromise - pending promise with reaction callback but no cleanup. */
 export function LeakyPromise() {
   const [data, setData] = useState("pending...");
 

@@ -1,10 +1,6 @@
 import { useEffect, useState } from "react";
 
-/**
- * Leaks on purpose: attaches a `mousemove` event listener on `window` (a global GC root)
- * but never removes it. The window retains the event callback, which retains the component
- * instance and the `_heap_` marker closure.
- */
+/** LeakyListeners - mousemove event listener leak with no cleanup. */
 export function LeakyListeners() {
   const [coords, setCoords] = useState({ x: 0, y: 0 });
 

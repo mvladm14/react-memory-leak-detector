@@ -9,10 +9,8 @@ import { LeakyPromise } from "./components/LeakyPromise";
 import { LeakyTimer } from "./components/LeakyTimer";
 
 /**
- * The e2e control surface. Each toggle mounts/unmounts one child; the Playwright
- * spec clicks a toggle twice (mount → unmount) and then forces GC to see whether
- * the detector flags the leftover. Buttons carry `data-testid`s for stable
- * selectors.
+ * The e2e control surface. Toggles mount/unmount of components.
+ * Playwright toggles mount/unmount and runs GC to check leak detection.
  */
 export function App() {
   const [leaky, setLeaky] = useState(false);

@@ -1,9 +1,6 @@
 import { useEffect, useState } from "react";
 
-/**
- * Fixed animation frame component. Cancels the requestAnimationFrame on unmount,
- * releasing the scheduler's reference to the loop callback.
- */
+/** FixedAnimationFrame - cancels requestAnimationFrame on unmount. */
 export function FixedAnimationFrame() {
   const [frames, setFrames] = useState(0);
 

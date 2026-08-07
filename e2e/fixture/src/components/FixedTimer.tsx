@@ -1,11 +1,6 @@
 import React, { useEffect, useState } from "react";
 
-/**
- * The correctly-cleaned-up twin of LeakyTimer. Its effect clears the interval
- * on unmount, so nothing keeps the callback (or the injected `_heap_` marker)
- * alive afterward — GC reclaims it and the detector must stay silent. This is
- * the false-positive guard: if the detector flagged this, it'd be useless.
- */
+/** FixedTimer - properly clears setInterval on unmount. */
 export function FixedTimer() {
   const [n, setN] = useState(0);
 
