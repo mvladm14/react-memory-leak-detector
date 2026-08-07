@@ -123,4 +123,33 @@ describe("babel-plugin-heap-markers", () => {
     // MethodComponent$Heap should be defined, and handler should have _heap_ && 0
     expect(result).toContain("_heap_ && 0;");
   });
+
+  it("captures nested function declarations", () => {
+    // A leak whose only retainer is a nested `function` declaration (e.g. an
+    // event handler attached without cleanup) must still retain _heap_.
+    const code = `
+      import React from "react";
+      function MyComponent() {
+        function onResize() { doStuff(); }
+        return <div />;
+      }
+    `;
+    const result = transform(code);
+    expect(result).toMatch(/function onResize\(\)\s*{\s*_heap_ && 0;/);
+  });
+
+  it("does not inject into its own synthetic unmount effect", () => {
+    // The injected useEffect already references _heap_ (markMounted/markUnmounted),
+    // so Phase 2 must not add `_heap_ && 0` into it — and must not double-inject.
+    const code = `
+      import React from "react";
+      function MyComponent() {
+        const handleClick = () => { console.log("click"); };
+        return <div onClick={handleClick} />;
+      }
+    `;
+    const result = transform(code);
+    // Exactly one capture: the single user closure (handleClick).
+    expect((result.match(/_heap_ && 0;/g) || []).length).toBe(1);
+  });
 });

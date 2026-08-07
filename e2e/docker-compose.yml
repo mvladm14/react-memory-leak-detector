@@ -1,0 +1,26 @@
+# Mount the repo into the harness container and run the leak-detector matrix.
+#
+#   cd e2e && docker compose run --rm e2e                 # full 2x2 matrix
+#   cd e2e && docker compose run --rm e2e sh -c "npm ci && node e2e/run.mjs v6:oxc"
+#
+# The repo root (parent of this file) is bind-mounted at /work so the container
+# runs against your live source. node_modules are kept in named volumes instead
+# of the bind mount, so the host's macOS-native binaries (esbuild, oxc-parser)
+# never shadow the Linux ones the container installs.
+services:
+  e2e:
+    build: .
+    working_dir: /work
+    volumes:
+      - ..:/work
+      - root_nm:/work/node_modules
+      - e2e_nm:/work/e2e/node_modules
+      - fixture_nm:/work/e2e/fixture/node_modules
+    # CI=1 makes Playwright forbid `.only` and not reuse a stray dev server.
+    environment:
+      - CI=1
+
+volumes:
+  root_nm:
+  e2e_nm:
+  fixture_nm:

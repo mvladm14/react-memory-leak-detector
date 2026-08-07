@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>leak-detector e2e fixture</title>
+    <script>
+      // Configure the runtime BEFORE it installs (config.ts reads this on load).
+      // A classic inline script runs before the deferred module scripts, so the
+      // options are in place before main.tsx (and its runtime import) evaluate.
+      // These make the detector's verdict deterministic for the e2e:
+      //   leakAgeMs 0        — an unmounted-but-retained instance is stale at once
+      //   warnCooldownMs 0   — never debounce the warning/event
+      //   sweepIntervalMs ∞  — no background sweeps; the test drives forceGc()/sweep()
+      window.__heapTrackerOptions = {
+        leakAgeMs: 0,
+        suspectThreshold: 1,
+        warnCooldownMs: 0,
+        sweepIntervalMs: 1000000000,
+        logging: true,
+      };
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

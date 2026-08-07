@@ -39,3 +39,6 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      - name: Typecheck declaration files
+        run: npm run typecheck

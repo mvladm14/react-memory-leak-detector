@@ -84,6 +84,14 @@
  * Components additionally require a .jsx/.tsx extension and a JSX element in
  * the body — that's structural, not a config option.
  */
+const {
+  isPascalCase,
+  isCustomHook,
+  isExcludedName: isExcludedNameShared,
+  isReactFile: isReactFileShared,
+  isJSOrTSFile: isJSOrTSFileShared,
+} = require("./lib/predicates");
+
 module.exports = function babelPluginHeapMarkers({ types: t }, options = {}) {
   const {
     include = /\.[tj]sx?$/,
@@ -102,35 +110,23 @@ module.exports = function babelPluginHeapMarkers({ types: t }, options = {}) {
   const instrumentedFunctions = new WeakSet();
   // Track function nodes that are marker constructors (don't inject _heap_ && 0)
   const markerConstructors = new WeakSet();
+  // Track closures WE injected (the synthetic unmount effect's arrows). Phase 2
+  // must skip them: they already reference _heap_ via markMounted/markUnmounted,
+  // and because they're inserted via unshiftContainer during Phase 1 the
+  // traversal re-queues them, so leaving them in scope injected `_heap_ && 0`
+  // twice. The Oxc engine never sees these nodes (it splices the effect as
+  // text), so skipping them keeps the two engines' output at parity.
+  const syntheticClosures = new WeakSet();
 
-  function isPascalCase(name) {
-    return /^[A-Z]\w*$/.test(name);
-  }
-
-  function isCustomHook(name) {
-    // Matches use + uppercase letter: useEffect, useMyHook, etc.
-    // Excludes bare "use"
-    return /^use[A-Z]/.test(name);
-  }
-
-  function isExcludedName(name) {
-    return excludeNames.some((re) => re.test(name));
-  }
+  // Detection predicates are shared with the Oxc engine via ./lib/predicates so
+  // the two engines can't drift. The file-gate helpers close over this plugin's
+  // `include`/`excludeNames`, keeping their call sites single-argument.
+  const isExcludedName = (name) => isExcludedNameShared(name, excludeNames);
+  const isReactFile = (filename) => isReactFileShared(filename, include);
+  const isJSOrTSFile = (filename) => isJSOrTSFileShared(filename, include);
 
   function isExcludedFromUnmountTracking(name) {
     return excludeUnmountTracking.some((re) => re.test(name));
-  }
-
-  function isReactFile(filename) {
-    // Components must live in JSX/TSX files. We narrow the user's `include`
-    // to JSX extensions for component detection only.
-    return (
-      /\.[tj]sx$/.test(filename || "") && include.test(filename || "")
-    );
-  }
-
-  function isJSOrTSFile(filename) {
-    return include.test(filename || "");
   }
 
   function containsJSX(nodePath) {
@@ -274,6 +270,11 @@ module.exports = function babelPluginHeapMarkers({ types: t }, options = {}) {
         t.returnStatement(cleanup),
       ])
     );
+    // These are our own closures — keep Phase 2 from injecting `_heap_ && 0`
+    // into them (they already capture _heap_, and re-queued traversal would
+    // otherwise inject it twice). See syntheticClosures above.
+    syntheticClosures.add(effectBody);
+    syntheticClosures.add(cleanup);
     return t.expressionStatement(
       t.callExpression(t.identifier(USE_EFFECT_ALIAS), [
         effectBody,
@@ -316,6 +317,10 @@ module.exports = function babelPluginHeapMarkers({ types: t }, options = {}) {
    * get processed by Phase-2 normally — harmless.
    */
   function injectMarkerVariable(bodyPath, componentName, state) {
+    // Signal to wrappers (e.g. the Vite plugin) that this file was actually
+    // instrumented, so they can skip re-emitting untouched files.
+    // eslint-disable-next-line no-param-reassign
+    state.file.metadata.heapMarkers = true;
     const markerName = `${componentName}$Heap`;
 
     // Build the named function expression node
@@ -430,6 +435,8 @@ module.exports = function babelPluginHeapMarkers({ types: t }, options = {}) {
     if (instrumentedFunctions.has(fnPath.node)) return false;
     // Don't inject into marker constructors
     if (markerConstructors.has(fnPath.node)) return false;
+    // Don't inject into closures we synthesized (the unmount effect)
+    if (syntheticClosures.has(fnPath.node)) return false;
 
     // Walk up the AST to find a parent component or hook function
     const parentInstrumented = fnPath.findParent(
@@ -520,6 +527,10 @@ module.exports = function babelPluginHeapMarkers({ types: t }, options = {}) {
               ])
             );
             programPath.unshiftContainer("body", configAst);
+            // Injecting the runtime-config block also counts as instrumenting
+            // the file (see injectMarkerVariable).
+            // eslint-disable-next-line no-param-reassign
+            state.file.metadata.heapMarkers = true;
           }
 
           const specifiers = [];
@@ -573,28 +584,47 @@ module.exports = function babelPluginHeapMarkers({ types: t }, options = {}) {
       // Handle: function useMyHook() { ... }
       FunctionDeclaration(fnPath, state) {
         if (state.skipFile) return;
+
+        // ─── Phase 1: is this declaration itself a component or hook? ───
         // The injected marker uses useRef + useEffect, so files that don't
         // import React can't be instrumented. Also filters out `use*`-named
         // utilities in non-React files that aren't actually hooks.
-        if (!state.fileImportsReact) return;
-        const name = fnPath.node.id?.name;
-        if (!name) return;
-        if (isExcludedName(name)) return;
-
-        // Custom hooks: any .ts/.tsx/.js/.jsx file, use* prefix
-        if (trackHooks && isCustomHook(name) && isJSOrTSFile(state.filename)) {
-          instrumentedFunctions.add(fnPath.node);
-          injectMarkerVariable(fnPath.get("body"), name, state);
-          return;
+        if (state.fileImportsReact) {
+          const name = fnPath.node.id?.name;
+          if (name && !isExcludedName(name)) {
+            // Custom hooks: any .ts/.tsx/.js/.jsx file, use* prefix
+            if (
+              trackHooks &&
+              isCustomHook(name) &&
+              isJSOrTSFile(state.filename)
+            ) {
+              instrumentedFunctions.add(fnPath.node);
+              injectMarkerVariable(fnPath.get("body"), name, state);
+              return;
+            }
+            // Components: .tsx/.jsx only, PascalCase, must contain JSX
+            if (
+              isReactFile(state.filename) &&
+              isPascalCase(name) &&
+              containsJSX(fnPath)
+            ) {
+              instrumentedFunctions.add(fnPath.node);
+              injectMarkerVariable(fnPath.get("body"), name, state);
+              return;
+            }
+          }
         }
 
-        // Components: .tsx/.jsx only, PascalCase, must contain JSX
-        if (!isReactFile(state.filename)) return;
-        if (!isPascalCase(name)) return;
-        if (!containsJSX(fnPath)) return;
-
-        instrumentedFunctions.add(fnPath.node);
-        injectMarkerVariable(fnPath.get("body"), name, state);
+        // ─── Phase 2: a nested function declaration inside an instrumented
+        // component/hook. Mirrors the ArrowFunctionExpression /
+        // FunctionExpression visitors so `function helper() {}` captures
+        // _heap_ too — otherwise a leak whose sole retainer is a nested
+        // function declaration would go undetected (and diverge from the Oxc
+        // engine, which already instruments these).
+        if (!isJSOrTSFile(state.filename)) return;
+        if (shouldInjectVoidHeap(fnPath)) {
+          injectVoidHeap(fnPath);
+        }
       },
 
       // Handle: const MyComponent = () => { ... }

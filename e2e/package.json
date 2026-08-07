@@ -1,0 +1,14 @@
+{
+  "name": "leak-detector-e2e",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "End-to-end pipeline: installs the packed detector into a real Vite app and runs it in headless Chromium (with --expose-gc) to prove live leak detection across the plugin-react v5/v6 x oxc/babel matrix.",
+  "scripts": {
+    "test": "node run.mjs",
+    "test:combo": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.62.0"
+  }
+}
