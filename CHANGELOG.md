@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-08-07
+
 ### Added
 
 - **First-class Vite plugin** at `react-memory-leak-detector/vite`, compatible
@@ -161,7 +163,8 @@ First public release on npm.
   `subscribers`, `sweep`) with `runtime.ts` as the entry that wires the API
   and starts the sweep loop. No change to the public surface.
 
-[Unreleased]: https://github.com/mvladm14/react-memory-leak-detector/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/mvladm14/react-memory-leak-detector/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/mvladm14/react-memory-leak-detector/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/mvladm14/react-memory-leak-detector/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/mvladm14/react-memory-leak-detector/compare/v0.2.0...v1.0.0
 [0.2.0]: https://github.com/mvladm14/react-memory-leak-detector/releases/tag/v0.2.0
