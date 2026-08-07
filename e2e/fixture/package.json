@@ -1,0 +1,21 @@
+{
+  "name": "leak-detector-e2e-fixture",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Minimal Vite + React app used by the e2e pipeline to run the leak detector against a real dev server in a real browser. Modeled on react-leak-demo but self-contained so CI never depends on a sibling repo.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "vite": "^8.0.0",
+    "plugin-react-v5": "npm:@vitejs/plugin-react@^5",
+    "plugin-react-v6": "npm:@vitejs/plugin-react@^6"
+  }
+}

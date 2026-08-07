@@ -1,0 +1,18 @@
+{
+  // Type-checks the package's hand-written declaration files against a
+  // consumer-style usage file, with `skipLibCheck: false` so a typo in
+  // `vite.d.ts` / `babel-plugin.d.ts` fails here instead of only in consumers.
+  // `tsconfig.json` (the build) only covers `src/`, so this is a separate pass.
+  "compilerOptions": {
+    "target": "ES2021",
+    "lib": ["ES2021", "DOM"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "esModuleInterop": true,
+    "noEmit": true,
+    "skipLibCheck": false,
+    "types": []
+  },
+  "include": ["type-tests/**/*.ts"]
+}

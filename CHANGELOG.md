@@ -7,6 +7,79 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **First-class Vite plugin** at `react-memory-leak-detector/vite`, compatible
+  with `@vitejs/plugin-react` **v5 and v6+** (Oxc), `@vitejs/plugin-react-swc`,
+  or no React plugin at all. It runs the heap-markers transform itself in an
+  `enforce: "pre"` step instead of relying on the React plugin's `babel` option
+  (which v6 removed). Place `heapMarkers()` **before** `react()` in the plugins
+  array (see README). Applies to the dev server only by default
+  (`apply: "serve"`), so markers are stripped from production builds. Accepts the
+  Babel plugin's options plus `include`, `exclude`, `apply`, and `parserPlugins`;
+  the options type is exported as `HeapMarkersViteOptions`. This is the
+  recommended way to wire up Vite.
+  - `parserPlugins` opts extra `@babel/parser` plugins in (e.g.
+    `["decorators-legacy"]`). The marker step parses with Babel — not the app's
+    transformer — and reads no project Babel config, so source using non-default
+    syntax needs its parser plugin listed here.
+  - `exclude` skips files matching a RegExp; `include` now also matches
+    `.mjs`/`.cjs`/`.mts`/`.cts`.
+  - The plugin only re-emits files it actually instruments; react-importing
+    modules with no component/hook to mark are passed through untouched (no
+    needless Babel round-trip or sourcemap).
+- `@babel/core` is now a runtime `dependency` (the Vite plugin invokes Babel
+  itself rather than piggy-backing on the host's Babel setup).
+- **Oxc engine for the Vite plugin**, selected via a new `engine` option
+  (`"oxc" | "babel"`). The Oxc engine parses with `oxc-parser` and injects
+  markers surgically with `magic-string` — no `@babel/core`, no full reprint,
+  and it parses TS/JSX/decorators natively (so `parserPlugins` is a no-op for
+  it). Both engines emit identical markers, so the runtime and heap-snapshot
+  workflow are unchanged. When `engine` is omitted the plugin auto-detects,
+  preferring Oxc and falling back to Babel if `oxc-parser` can't be loaded. The
+  fallback is evaluated at transform time (not just at resolve time), so a
+  missing or unusable Oxc degrades to Babel with a one-line warning instead of
+  crashing the dev server. An explicit `engine: "oxc"` surfaces the load error
+  rather than switching engines.
+  - `oxc-parser` and `magic-string` are `optionalDependencies` — the package
+    keeps its `node >=16` support for the Babel engine and core plugin, while
+    `oxc-parser` itself needs **Node ^20.19 or >=22.12** and prebuilt native
+    bindings. On older Node or an unsupported platform they may be skipped or
+    fail to load, and the plugin transparently falls back to Babel. Both are
+    ESM-only and loaded lazily via dynamic `import()`, so the Oxc engine's
+    `transform` hook is async and works on Node versions without `require(esm)`.
+  - The Vite plugin's internals moved to `lib/engine-oxc.js` /
+    `lib/engine-babel.js` behind a thin dispatcher in `vite.js`; shared
+    detection predicates live in `lib/predicates.js`. Public entry point and
+    options are unchanged apart from the added `engine`.
+
+### Changed
+
+- README: the Vite setup now leads with `react-memory-leak-detector/vite`,
+  documents the `engine` option and the two engines, and keeps the v5
+  `babel`-option wiring as an alternative. Removes the previous "requires
+  `@vitejs/plugin-react` v5 / v6 not supported yet" caveat — v6 is now supported
+  via the Vite plugin.
+- Test runner now enables `--experimental-vm-modules` so Jest can load the
+  ESM-only `oxc-parser` / `magic-string` via dynamic `import()`.
+
+### Fixed
+
+- **Engine parity — nested function declarations.** The Babel engine now injects
+  the `_heap_ && 0` closure-capture into nested `function` declarations (e.g. an
+  event handler attached without cleanup), matching the Oxc engine. Previously
+  only arrow functions, function expressions, and object/class methods were
+  captured, so a leak whose sole retainer was a nested function declaration went
+  undetected under the Babel engine.
+- **Engine parity — synthetic effect.** The Babel engine no longer injects
+  `_heap_ && 0` into its own synthetic unmount effect (it already references
+  `_heap_`), which also removes a double-injection there. Output now matches the
+  Oxc engine closure-for-closure.
+- **Plugin ordering.** The Vite plugin warns at startup if a JSX-compiling React
+  plugin (`@vitejs/plugin-react` v5) is ordered ahead of it — which would strip
+  JSX before markers are injected and silently leave components uninstrumented.
+  The README no longer claims order is irrelevant; place `heapMarkers()` first.
+
 ## [1.1.0] - 2026-08-03
 
 ### Added

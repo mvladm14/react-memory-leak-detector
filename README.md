@@ -1,12 +1,13 @@
 # react-memory-leak-detector
 
-Live memory-leak detection for React components and hooks. No heap snapshot required.
+Catch React memory leaks the moment they happen — no heap snapshots required.
 
-The moment a component is unmounted but still retained — by a closure, event listener, timer, or subscription — you know about it: as a **leak event you can subscribe to** and forward anywhere (a debug overlay, your own logger, Sentry), or as a **live console warning**. Under the hood, a babel plugin tags every component and hook, and a runtime tracker watches those tags with `WeakRef` + `FinalizationRegistry`.
+When a component unmounts but something still holds onto it (a stray timer,
+listener, subscription, or closure), you get a **console warning** right away and
+a **leak event** you can forward to your own logger or Sentry. Dev-only — it
+compiles out of production builds.
 
-Dev-only. Zero impact on production bundles.
-
-## Installation
+## Install
 
 ```bash
 npm install --save-dev react-memory-leak-detector
@@ -14,229 +15,104 @@ npm install --save-dev react-memory-leak-detector
 
 ## Setup
 
-The detector has two pieces: a **Babel plugin** that injects the markers, and a
-**runtime** you load once in dev.
+Two steps: add the build plugin, then import the runtime once in dev.
 
-### 1. Add the Babel plugin
+### 1. Add the plugin
 
-Enable it in development only. It runs through Babel, so it plugs into any
-Babel-based build.
-
-**Vite + `@vitejs/plugin-react`**
-The Babel-based React plugin exposes a `babel` option — pass the plugin there,
-gated to development:
+**Vite**
 
 ```ts
 // vite.config.ts
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
-import heapMarkers from "react-memory-leak-detector/babel-plugin";
+import heapMarkers from "react-memory-leak-detector/vite";
 
-export default defineConfig(({ mode }) => ({
+export default defineConfig({
   plugins: [
-    react({
-      babel: {
-        plugins:
-          mode === "development"
-            ? [
-                [
-                  heapMarkers,
-                  {
-                    /* options */
-                  },
-                ],
-              ]
-            : [],
-      },
-    }),
+    heapMarkers(), // list it BEFORE react()
+    react(),
   ],
-}));
+});
 ```
 
-> **Requires `@vitejs/plugin-react` v5.** v6+ switched to Oxc and removed the
-> `babel` option, so it isn't supported yet — pin to v5
-> (`npm i -D @vitejs/plugin-react@^5`), which is Babel-based and still supports
-> Vite 8. (First-class v6 support is planned.)
+Dev-only by default, so nothing ships to production. Works with any
+`@vitejs/plugin-react` version (or none). Keep `heapMarkers()` before `react()` —
+it warns you at startup if the order is wrong.
 
-**Webpack / Next.js / standard Babel**
-Add the plugin to your `.babelrc`, `babel.config.js`, or `babel-loader` options
-for the development environment:
+**Webpack / Next.js / Babel** — add the plugin to your Babel config, in development:
 
 ```json
 // .babelrc
-{
-  "env": {
-    "development": { "plugins": ["react-memory-leak-detector/babel-plugin"] }
-  }
-}
+{ "env": { "development": { "plugins": ["react-memory-leak-detector/babel-plugin"] } } }
 ```
 
 ### 2. Import the runtime
 
-Load the runtime once at the very top of your entry (`src/main.tsx`,
-`src/index.tsx`, `_app.tsx`, …), dynamically imported so it stays out of your
-production bundle:
+Load it once at the top of your app entry, in dev only:
 
 ```js
-// Webpack / Next.js
-if (process.env.NODE_ENV === "development") {
-  import("react-memory-leak-detector/runtime");
-}
-
 // Vite
-if (import.meta.env.DEV) {
-  import("react-memory-leak-detector/runtime");
-}
+if (import.meta.env.DEV) import("react-memory-leak-detector/runtime");
+
+// Webpack / Next.js
+if (process.env.NODE_ENV === "development") import("react-memory-leak-detector/runtime");
 ```
 
-### TypeScript
+That's it. Type declarations are bundled, so TypeScript needs no extra setup.
 
-Type declarations ship with the package for both entry points
-(`/babel-plugin`, `/runtime`), so no ambient `declare module` shims are needed.
-The runtime augments the global `Window` type — `window.__heapTracker` and
-`window.__heapTrackerOptions` are typed for you. The Babel plugin's options are
-exported as `HeapMarkersOptions`:
+## Getting leaks
 
-```ts
-import type { HeapMarkersOptions } from "react-memory-leak-detector/babel-plugin";
+On page load the tracker installs, and leaks show up as console warnings as they
+happen:
+
+```
+[heap-leak] Suspected leak: UserCard — 1 instance(s) unmounted >10s ago still retained (live 1 total)
 ```
 
-## Usage
+Any time, run `window.__heapTracker.report()` for a live table of tracked
+components. Two numbers matter:
 
-The tracker installs `window.__heapTracker` on dev page load.
+- **live** — instances still in memory (mounted, or unmounted and not yet collected).
+- **stale** — unmounted more than `leakAgeMs` ago and *still* in memory. **Stale is the leak.**
 
-### Subscribing to leaks
-
-Use `subscribe` to forward stale-leak events wherever they're most useful — your own logger, a debug overlay, Sentry, etc. The listener only fires for **stale** leaks (instances unmounted ≥ `leakAgeMs` ago and still reachable), never for currently-mounted or recently-unmounted components.
+Prefer to handle leaks yourself — a debug overlay, your logger, Sentry? Subscribe:
 
 ```ts
 const unsubscribe = window.__heapTracker.subscribe((event) => {
-  // event: { component, stale, live, leakAgeMs, at }
-  console.log(`Leak in ${event.component}: ${event.stale} stale instance(s)`);
-  // e.g. Sentry.captureMessage(`heap-leak:${event.component}`, { extra: event });
+  // { component, stale, live, leakAgeMs, at }
+  Sentry.captureMessage(`heap-leak:${event.component}`, { extra: event });
 });
-
-// later
-unsubscribe();
 ```
 
-Event shape:
+Events fire only for stale leaks and are debounced per component.
+`configure({ logging: false })` keeps the events but silences the console.
 
-| Field       | Type     | Description                                                                       |
-| ----------- | -------- | --------------------------------------------------------------------------------- |
-| `component` | `string` | Component / hook name. Matches the `ComponentName$Heap` marker in heap snapshots. |
-| `stale`     | `number` | Instances unmounted ≥ `leakAgeMs` ago that are still reachable.                   |
-| `live`      | `number` | Total reachable instances (mounted + recently-unmounted + leaked).                |
-| `leakAgeMs` | `number` | Threshold used to classify an instance as stale.                                  |
-| `at`        | `number` | `Date.now()` when the event was fired.                                            |
+## Finding the cause
 
-Firing is gated by the same `suspectThreshold` and `warnCooldownMs` as the console warning below, so you won't get spammed. To receive events without the console warnings, call `configure({ logging: false })`.
+A stale component tells you *what* leaked; a heap snapshot tells you *why*. In
+Chrome DevTools → Memory, take a snapshot and filter for `ComponentName$Heap`:
 
-### Console warnings
+![Heap snapshot: LeakyTimeout$Heap instances retained, with the Retainers panel showing a DOMTimer holding them](docs/leaky-timeout-heapsnapshot.png)
 
-On dev page load you'll see:
-
-```
-[heap-leak] tracker installed. Run window.__heapTracker.report() for a live table.
-```
-
-Warnings fire automatically as `console.warn`, debounced to once per 30s per component:
-
-```
-[heap-leak] Suspected leak: GapsByPriorityCard — 1 instance(s) unmounted >10s ago still retained (live 1 total)
-```
-
-### Reading the numbers: `live` vs `stale`
-
-Both count `_heap_` instances still reachable in JS:
-
-- **`live`** — total reachable instances. Includes currently-mounted, recently-unmounted (GC pending), and leaked.
-- **`stale`** ⊆ `live` — only those where `markUnmounted` fired ≥10s ago. These are the leak suspects.
-
-The leak signal is purely **`stale`**; `live` is context.
-
-| Scenario                             | live | stale |
-| ------------------------------------ | ---- | ----- |
-| 80 cards on screen                   | 80   | 0     |
-| Just navigated away, <10s ago        | 0–80 | 0     |
-| Unmounted but listener still holds 1 | 1+   | 1+    |
-
-### Finding the leak
-
-Once a component shows up as stale, take a heap snapshot in Chrome DevTools and
-filter for `ComponentName$Heap` — here, `LeakyTimeout$Heap`:
-
-![Heap snapshot: LeakyTimeout$Heap instances still retained, with the Retainers panel showing a DOMTimer holding them](docs/leaky-timeout-heapsnapshot.png)
-
-Each `ComponentName$Heap` row is one component instance still alive in memory. If
-instances linger after the component unmounted, that's the leak. Select one and
-read the **Retainers** panel bottom-up to see *what* is holding it: here the
-chain runs through a `DOMTimer` → `ScheduledAction`, i.e. an uncleared
-`setTimeout`/`setInterval` is pinning `LeakyTimeout`'s scope (its `_heap_`
-marker). Clear that timer on unmount and the instances disappear.
-
-## API
-
-| Call                               | Purpose                                                                                                                                                                                                                          |
-| ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `window.__heapTracker.report()`    | `console.table` of every component with live instances; also returns the array.                                                                                                                                                  |
-| `window.__heapTracker.configure()` | Configure runtime options. Example: `configure({ logging: false })` disables all console outputs while continuing tracking.                                                                                                      |
-| `window.__heapTracker.sweep()`     | Force an immediate sweep (otherwise runs every 2s).                                                                                                                                                                              |
-| `window.__heapTracker.forceGc()`   | `window.gc?.()` + re-sweep. Needs Chrome started with `--js-flags="--expose-gc"`. Use it to confirm a flag isn't just GC lag.                                                                                                    |
-| `window.__heapTracker.subscribe()` | Subscribe to stale-leak events (see [Subscribing to leaks](#subscribing-to-leaks)). Fires only for stale leaks, gated by the same `suspectThreshold` + `warnCooldownMs` as the console warning. Returns an unsubscribe function. |
+Each row is a leaked instance. Select one and read the **Retainers** panel
+bottom-up to see what's holding it — here a `DOMTimer`, i.e. an uncleared
+`setTimeout`/`setInterval`. Clean it up on unmount and the instances disappear.
 
 ## Configuration
 
+All options are optional. The common ones, passed to the plugin:
+
 ```ts
 heapMarkers({
-  include: /\.[tj]sx?$/, // file path regex
-  excludeNames: [/^useTranslation$/], // names that skip ALL instrumentation
-  excludeUnmountTracking: [], // names that keep the heap marker but skip
-  // the synthetic useEffect (use for components
-  // managed by <Activity mode="hidden">)
-  trackHooks: true, // when false, only components are instrumented
-  skipServerComponents: false, // when true, skip files without "use client"
-  logging: true, // when false, disables automatic console warnings
-  leakAgeMs: 10000, // time in ms before an unmounted component is considered leaked
-  suspectThreshold: 1, // minimum number of stale instances before warning
-  sweepIntervalMs: 2000, // how often the GC sweep checks for leaks
-  warnCooldownMs: 30000, // how long to wait before warning about the SAME component again
+  leakAgeMs: 10000,   // ms unmounted-but-retained before it counts as a leak
+  logging: true,      // console warnings on/off
+  trackHooks: true,   // also track custom hooks, not just components
+  excludeNames: [/^useTranslation$/], // component/hook names to skip entirely
 });
 ```
 
-All options are optional with sensible defaults.
-
-`include`, `excludeNames`, `excludeUnmountTracking`, `trackHooks`, and
-`skipServerComponents` govern what the Babel plugin instruments at build time.
-The rest (`logging`, `leakAgeMs`, `suspectThreshold`, `sweepIntervalMs`,
-`warnCooldownMs`) are **runtime** behaviors — when you set any of them on the
-plugin, it injects `window.__heapTrackerOptions` so the runtime picks them up on
-load. Equivalent ways to configure the runtime:
-
-```ts
-// Before the runtime is imported (e.g. top of main.tsx):
-window.__heapTrackerOptions = { leakAgeMs: 5000, logging: false };
-
-// Or any time after it has loaded:
-window.__heapTracker?.configure({ leakAgeMs: 5000 });
-```
-
-## How it works
-
-1. The babel plugin injects a uniquely-named `_heap_` marker into every component/hook — searchable as `ComponentName$Heap` in Chrome DevTools heap snapshots.
-2. The runtime tracker wraps each marker in a `WeakRef` and registers it with a `FinalizationRegistry`. A sweep every 2s checks which markers are still reachable.
-3. To know _when_ a component actually unmounts, the babel plugin also injects a **synthetic `useEffect`** into every component and hook:
-
-   ```js
-   __heap_useEffect(() => {
-     window.__heapTracker?.markMounted(_heap_);
-     return () => window.__heapTracker?.markUnmounted(_heap_);
-   }, []);
-   ```
-
-   Imported under a renamed alias so it can't collide with user code. A mount counter handles React StrictMode's double-invoke correctly.
-
-4. If a `_heap_` is still reachable in JS ≥10s after its component unmounted, something is leaking it → console warning.
+Runtime options can also be changed live:
+`window.__heapTracker.configure({ leakAgeMs: 5000 })`.
 
 ## Compatibility
 
@@ -249,6 +125,73 @@ window.__heapTracker?.configure({ leakAgeMs: 5000 });
 | `<Activity mode="hidden">`                | ⚠️ use `excludeUnmountTracking` to opt out |
 | React Server Components                   | ⚠️ use `skipServerComponents: true`        |
 | Class components                          | ❌ not instrumented (PRs welcome)          |
+
+<details>
+<summary>Advanced — all options, API, engines, and how it works</summary>
+
+### All plugin options
+
+```ts
+heapMarkers({
+  // ── build-time: what gets instrumented ──
+  include: /\.[tj]sx?$/,              // files to process
+  excludeNames: [/^useTranslation$/], // names that skip ALL instrumentation
+  excludeUnmountTracking: [],         // names that keep the heap marker but skip
+                                      //   the unmount effect — use for components
+                                      //   under <Activity mode="hidden">, whose
+                                      //   cleanup fires while still alive
+  trackHooks: true,                   // false = components only
+  skipServerComponents: false,        // true = skip files without "use client" (RSC)
+
+  // ── runtime: how leaks are judged/reported (injected into the app) ──
+  logging: true,                      // false = track silently, no console warnings
+  leakAgeMs: 10000,                   // age before an unmounted instance is "stale"
+  suspectThreshold: 1,                // min stale instances before warning/event
+  sweepIntervalMs: 2000,              // how often the sweep runs
+  warnCooldownMs: 30000,              // min gap between warnings for the same component
+});
+```
+
+Runtime options can also be set before load (`window.__heapTrackerOptions = { … }`,
+e.g. at the top of `main.tsx`) or live (`window.__heapTracker.configure({ … })`).
+
+### `window.__heapTracker` API
+
+| Call | Purpose |
+| ---- | ------- |
+| `report()` | `console.table` of every component with live instances; also returns the array. |
+| `subscribe(fn)` | Listen for stale-leak events; returns an unsubscribe function. |
+| `configure(opts)` | Update runtime options (e.g. `{ logging: false }`). |
+| `sweep()` | Force an immediate sweep (otherwise every `sweepIntervalMs`). |
+| `forceGc()` | `window.gc?.()` + re-sweep. Needs Chrome started with `--js-flags="--expose-gc"`; use it to rule out plain GC lag. |
+
+Leak event shape: `{ component, stale, live, leakAgeMs, at }`. `component` matches
+the `ComponentName$Heap` marker in heap snapshots.
+
+### Engines (Vite plugin)
+
+The Vite plugin injects markers with **Oxc** by default and falls back to
+**Babel** automatically if `oxc-parser` can't load — you normally don't touch
+this. Force one with `heapMarkers({ engine: "oxc" })` or `"babel"`. The Babel
+engine parses with Babel and reads no project config, so non-default syntax
+(decorators, `using`, import attributes) needs its parser opted in, e.g.
+`heapMarkers({ engine: "babel", parserPlugins: ["decorators-legacy"] })`; the Oxc
+engine parses these natively. `oxc-parser` needs Node ^20.19 or >=22.12.
+
+TypeScript option types are exported as `HeapMarkersOptions`
+(`/babel-plugin`) and `HeapMarkersViteOptions` (`/vite`).
+
+### How it works
+
+1. The plugin tags every component/hook with a uniquely-named marker —
+   searchable as `ComponentName$Heap` in heap snapshots — and injects a synthetic
+   `useEffect` that reports mount/unmount.
+2. The runtime holds each marker in a `WeakRef` + `FinalizationRegistry` and
+   sweeps periodically.
+3. If a marker is still reachable well after its component unmounted, something
+   is leaking it → warning + event.
+
+</details>
 
 ## License
 
