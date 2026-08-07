@@ -2,7 +2,7 @@
 # Playwright's Chromium and its OS libraries baked in. The repo itself is
 # bind-mounted at run time (see docker-compose.yml) rather than copied, so this
 # image only needs the browser + system deps — it never goes stale on source.
-FROM node:22-bookworm
+FROM node:22-slim
 
 # Keep in sync with e2e/package.json's @playwright/test. run.mjs also runs
 # `playwright install chromium` at start, so a minor drift self-heals (it just
