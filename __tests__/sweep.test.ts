@@ -1,5 +1,5 @@
 import { loadRuntime, type RuntimeModules } from "./helpers";
-import type { LeakEvent } from "../src/types";
+import type { LeakEvent } from "../packages/core/src/types";
 
 /**
  * Helper: tracks an instance and forces it into the "stale" state by setting

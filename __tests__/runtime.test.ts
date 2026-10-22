@@ -1,4 +1,4 @@
-// Importing ../src/runtime has side effects: it installs `window.__heapTracker`,
+// Importing ../packages/core/src/runtime has side effects: it installs `window.__heapTracker`,
 // starts the sweep interval, and logs an install message. These tests verify the
 // install is idempotent (a second evaluation — HMR reload, duplicate import —
 // must not replace the live tracker or re-log) and that pre-load options apply.
@@ -30,7 +30,7 @@ describe("runtime install", () => {
 
   it("installs window.__heapTracker once and logs a single install message", () => {
     jest.isolateModules(() => {
-      require("../src/runtime");
+      require("../packages/core/src/runtime");
     });
 
     expect(testWindow.__heapTracker).toBeDefined();
@@ -42,12 +42,12 @@ describe("runtime install", () => {
 
   it("keeps the original tracker and does not re-log on a second evaluation", () => {
     jest.isolateModules(() => {
-      require("../src/runtime");
+      require("../packages/core/src/runtime");
     });
     const firstApi = testWindow.__heapTracker;
 
     jest.isolateModules(() => {
-      require("../src/runtime");
+      require("../packages/core/src/runtime");
     });
 
     expect(testWindow.__heapTracker).toBe(firstApi); // not replaced
@@ -58,7 +58,7 @@ describe("runtime install", () => {
     testWindow.__heapTrackerOptions = { logging: false };
 
     jest.isolateModules(() => {
-      require("../src/runtime");
+      require("../packages/core/src/runtime");
     });
 
     expect(testWindow.__heapTracker).toBeDefined();

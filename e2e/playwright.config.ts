@@ -4,6 +4,11 @@ import { defineConfig, devices } from "@playwright/test";
 // fail loudly rather than silently drifting to another port.
 const PORT = Number(process.env.PORT) || 5173;
 
+// Which fixture app to drive: the React fixture (default) or the Vue one. Set by
+// run.mjs per leg. Both fixtures expose identical data-testids / component names,
+// so a single leak.spec.ts covers both.
+const FIXTURE = process.env.FIXTURE || "fixture";
+
 export default defineConfig({
   testDir: "./playwright",
   // GC is non-deterministic even when forced; give each spec room to poll.
@@ -32,7 +37,7 @@ export default defineConfig({
   webServer: {
     // Boot the fixture's Vite dev server. PLUGIN_REACT / HEAP_ENGINE are already
     // in the environment (set by run.mjs per combo) and inherited here.
-    command: `npm --prefix fixture run dev -- --port ${PORT} --strictPort`,
+    command: `npm --prefix ${FIXTURE} run dev -- --port ${PORT} --strictPort`,
     url: `http://localhost:${PORT}`,
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,

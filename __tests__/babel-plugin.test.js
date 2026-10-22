@@ -1,5 +1,5 @@
 const babel = require("@babel/core");
-const plugin = require("../babel-plugin");
+const plugin = require("@memleak/react/babel-plugin");
 
 function transform(code, options = {}) {
   const result = babel.transformSync(code, {

@@ -1,6 +1,6 @@
 import { createRequire } from "node:module";
 import { defineConfig } from "vite";
-import heapMarkers from "react-memory-leak-detector/vite";
+import heapMarkers from "@memleak/react";
 
 // Matrix knobs, set by the orchestrator (e2e/run.mjs) / docker / CI:
 //   PLUGIN_REACT = "v5" | "v6"        which @vitejs/plugin-react (npm aliases)

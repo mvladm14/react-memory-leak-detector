@@ -17,7 +17,7 @@
 // left at its default: on Node <20.19 (no oxc-parser) it falls back to Babel,
 // but either engine injects the same markers, so these tests need no gate.
 const path = require("path");
-const heapMarkers = require("../vite");
+const heapMarkers = require("@memleak/react");
 
 const ROOT = path.resolve(__dirname, "fixtures/vite-app");
 

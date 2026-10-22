@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Vue 3 support** via a new `@memleak/vue` Vite plugin. It instruments Vue 3
+  `<script setup>` SFCs: each component gets a `ComponentName$Heap` marker (named
+  from the filename or `defineOptions({ name })`) plus `onMounted`/`onUnmounted`
+  live tracking, and every closure in the script block captures the marker. Uses
+  `@vue/compiler-sfc` to split the SFC and the Oxc engine to inject; dev-only by
+  default. See the README "Vue coverage" section for gaps (inline template
+  handlers, `<KeepAlive>`/`<Suspense>`).
+
+### Changed
+
+- **Restructured into the `memleak` monorepo** (npm workspaces), so leak
+  detection can grow across frameworks without one package accreting every
+  adapter's dependencies. The single package is now three:
+  - `@memleak/core` — the framework-agnostic runtime tracker (`@memleak/core/runtime`)
+    plus the shared build-time AST machinery (ESTree walk, marker/closure
+    splicing, runtime-config, detection predicates).
+  - `@memleak/react` — the React Vite plugin (default export) and the standalone
+    Babel plugin (`@memleak/react/babel-plugin`).
+  - `@memleak/vue` — the Vue 3 `<script setup>` Vite plugin.
+
+  Import paths move accordingly: `@memleak/react`, `@memleak/vue`,
+  `@memleak/react/babel-plugin`, and `@memleak/core/runtime`. The React marker
+  output and the runtime are byte-for-byte unchanged.
+- `react` / `vue` / `@babel/core` / `@vue/compiler-sfc` are now optional peer
+  dependencies of the adapter that uses them, so consumers install only what
+  their framework needs; each adapter carries `oxc-parser` + `magic-string` as
+  optional dependencies.
+
 ## [1.3.0] - 2026-08-07
 
 ### Changed

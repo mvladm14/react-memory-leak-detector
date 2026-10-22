@@ -90,7 +90,7 @@ const {
   isExcludedName: isExcludedNameShared,
   isReactFile: isReactFileShared,
   isJSOrTSFile: isJSOrTSFileShared,
-} = require("./lib/predicates");
+} = require("@memleak/core");
 
 module.exports = function babelPluginHeapMarkers({ types: t }, options = {}) {
   const {

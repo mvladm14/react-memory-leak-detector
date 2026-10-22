@@ -17,7 +17,7 @@ import type { HeapMarkersOptions } from "./babel-plugin";
  * Place it BEFORE `react()` in the plugins array so markers are injected before
  * the JSX is compiled away:
  *
- *   import heapMarkers from "react-memory-leak-detector/vite";
+ *   import heapMarkers from "@memleak/react";
  *   plugins: [heapMarkers({ leakAgeMs: 5000 }), react()]
  */
 declare function heapMarkersVite(

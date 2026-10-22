@@ -1,5 +1,5 @@
 /**
- * Oxc engine for react-memory-leak-detector's Vite plugin.
+ * Oxc engine (React) for the memory-leak detector's Vite plugin.
  *
  * Same job as the Babel engine (`engine-babel.js`) — inject heap markers into
  * React components/hooks in an `enforce: "pre"` transform hook — but built
@@ -14,9 +14,14 @@
  *      sourcemap falls out for free — no reprint, unlike the Babel engine.
  *
  * The *injected code shapes* are identical to the Babel plugin, so the runtime
- * tracker and heap-snapshot workflow are unchanged. See `../babel-plugin.js`
+ * tracker and heap-snapshot workflow are unchanged. See `./babel-plugin.js`
  * for the rationale behind each injected construct (useRef-stabilized marker,
  * `_heap_ && 0` closure capture, unmount effect).
+ *
+ * The generic machinery (ESTree walk, marker/closure splicing, runtime-config
+ * block) lives in `@memleak/core` and is shared with the Vue engine
+ * (`@memleak/vue`); only React's detection rules and marker/lifecycle shape
+ * live here.
  *
  * Requires `oxc-parser` and `magic-string`.
  */
@@ -26,7 +31,12 @@ const {
   isExcludedName,
   isReactFile,
   isJSOrTSFile,
-} = require("./predicates");
+  walk,
+  trackerCall,
+  spliceMarkers,
+  emitsConfig,
+  configSource,
+} = require("@memleak/core");
 
 // `oxc-parser` and `magic-string` are ESM-only packages. Loading them from this
 // CommonJS module with `require()` only works on Node ≥20.19 / ≥22.12 (which
@@ -76,30 +86,7 @@ function loadDeps() {
 const USE_EFFECT_ALIAS = "__heap_useEffect";
 const USE_REF_ALIAS = "__heap_useRef";
 
-const FUNCTION_TYPES = new Set([
-  "FunctionDeclaration",
-  "FunctionExpression",
-  "ArrowFunctionExpression",
-]);
-
 // ─── AST helpers ────────────────────────────────────────────────────────────
-
-/** Generic ESTree walk. `visit(node, parent)` runs in pre-order. */
-function walk(node, parent, visit) {
-  if (!node || typeof node.type !== "string") return;
-  visit(node, parent);
-  for (const key of Object.keys(node)) {
-    if (key === "type" || key === "start" || key === "end") continue;
-    const child = node[key];
-    if (Array.isArray(child)) {
-      for (const c of child) {
-        if (c && typeof c.type === "string") walk(c, node, visit);
-      }
-    } else if (child && typeof child.type === "string") {
-      walk(child, node, visit);
-    }
-  }
-}
 
 /** True if a JSX element/fragment appears anywhere inside `fnNode`. */
 function containsJSX(fnNode) {
@@ -150,15 +137,7 @@ function resolveComponentFunction(init) {
 
 // ─── Injected source builders ───────────────────────────────────────────────
 
-/**
- * The `typeof window !== "undefined" && window.__heapTracker && window.__heapTracker.<m>(...)`
- * guard, matching the Babel plugin's `buildTrackerMemberCall`.
- */
-function trackerCall(method, args) {
-  return `typeof window !== "undefined" && window.__heapTracker && window.__heapTracker.${method}(${args})`;
-}
-
-/** The marker block injected at the top of a component/hook body. */
+/** The React marker block injected at the top of a component/hook body. */
 function markerSource(name, withUnmountEffect) {
   const marker = `${name}$Heap`;
   let src =
@@ -176,27 +155,6 @@ function markerSource(name, withUnmountEffect) {
       `}, []);`;
   }
   return src;
-}
-
-/** Runtime-config block, matching the Babel plugin's Program-exit injection. */
-function configSource(opts) {
-  const o = JSON.stringify({
-    logging: opts.logging,
-    leakAgeMs: opts.leakAgeMs,
-    suspectThreshold: opts.suspectThreshold,
-    sweepIntervalMs: opts.sweepIntervalMs,
-    warnCooldownMs: opts.warnCooldownMs,
-  })
-    // Emit `leakAgeMs: 5000` (space after colon) to match the Babel output the
-    // existing tests assert on.
-    .replace(/"(\w+)":/g, "$1: ")
-    .replace(/,/g, ", ");
-  return (
-    `if (typeof window !== "undefined") {` +
-    `window.__heapTrackerOptions = ${o};` +
-    `window.__heapTracker && window.__heapTracker.configure(window.__heapTrackerOptions);` +
-    `}`
-  );
 }
 
 module.exports = function heapMarkersViteOxc(options = {}) {
@@ -221,12 +179,14 @@ module.exports = function heapMarkersViteOxc(options = {}) {
   const isExcludedFromUnmountTracking = (name) =>
     excludeUnmountTracking.some((re) => re.test(name));
 
-  const emitsConfig =
-    logging === false ||
-    leakAgeMs !== 10000 ||
-    suspectThreshold !== 1 ||
-    sweepIntervalMs !== 2000 ||
-    warnCooldownMs !== 30000;
+  const configOpts = {
+    logging,
+    leakAgeMs,
+    suspectThreshold,
+    sweepIntervalMs,
+    warnCooldownMs,
+  };
+  const emitConfig = emitsConfig(configOpts);
 
   return {
     name: "react-memory-leak-detector",
@@ -262,13 +222,16 @@ module.exports = function heapMarkersViteOxc(options = {}) {
       }
 
       // ── Pass 1: detect the component/hook functions to instrument ──
-      // Map<functionNode, { name }>
+      // Map<functionNode, { name, withEffect }>
       const instrumented = new Map();
 
       const consider = (name, fnNode, { requireJSX }) => {
         if (!fnNode) return;
         if (requireJSX && !containsJSX(fnNode)) return;
-        instrumented.set(fnNode, { name });
+        instrumented.set(fnNode, {
+          name,
+          withEffect: !isExcludedFromUnmountTracking(name),
+        });
       };
 
       walk(program, null, (node) => {
@@ -306,20 +269,12 @@ module.exports = function heapMarkersViteOxc(options = {}) {
         }
       });
 
-      const configOpts = {
-        logging,
-        leakAgeMs,
-        suspectThreshold,
-        sweepIntervalMs,
-        warnCooldownMs,
-      };
-
       if (instrumented.size === 0) {
         // No components/hooks to mark. The Babel engine still injects the
         // runtime-config block on every react-importing file when options are
         // non-default, so match it here rather than skipping the file — keeps
         // the two engines' output equivalent.
-        if (!emitsConfig) return null;
+        if (!emitConfig) return null;
         const s = new MagicString(code);
         s.prepend(configSource(configOpts) + "\n");
         return {
@@ -330,50 +285,10 @@ module.exports = function heapMarkersViteOxc(options = {}) {
 
       // ── Pass 2: splice markers + closure captures ──
       const s = new MagicString(code);
-      let needsUseRef = false;
-      let needsUseEffect = false;
+      spliceMarkers(s, program, instrumented, { markerSource, baseOffset: 0 });
 
-      /** Prepend `text` inside a function body (handles expression bodies). */
-      const prependInBody = (fnNode, text) => {
-        const body = fnNode.body;
-        if (body.type === "BlockStatement") {
-          s.appendLeft(body.start + 1, text);
-        } else {
-          // Expression body: `=> expr` → `=> { <text> return expr; }`
-          s.appendLeft(body.start, `{ ${text} return `);
-          s.appendLeft(body.end, "; }");
-        }
-      };
-
-      // depth = number of instrumented ancestor functions we're nested inside.
-      const inject = (node, depth) => {
-        let childDepth = depth;
-        if (FUNCTION_TYPES.has(node.type)) {
-          const hit = instrumented.get(node);
-          if (hit) {
-            const withEffect = !isExcludedFromUnmountTracking(hit.name);
-            prependInBody(node, markerSource(hit.name, withEffect));
-            needsUseRef = true;
-            if (withEffect) needsUseEffect = true;
-            childDepth = depth + 1;
-          } else if (depth > 0) {
-            // Nested closure inside an instrumented function — capture _heap_.
-            prependInBody(node, "_heap_ && 0;");
-          }
-        }
-        for (const key of Object.keys(node)) {
-          if (key === "type" || key === "start" || key === "end") continue;
-          const child = node[key];
-          if (Array.isArray(child)) {
-            for (const c of child) {
-              if (c && typeof c.type === "string") inject(c, childDepth);
-            }
-          } else if (child && typeof child.type === "string") {
-            inject(child, childDepth);
-          }
-        }
-      };
-      inject(program, 0);
+      const needsUseRef = instrumented.size > 0;
+      const needsUseEffect = [...instrumented.values()].some((v) => v.withEffect);
 
       // ── Prelude: runtime config + aliased react import ──
       const prelude = [];
@@ -385,7 +300,7 @@ module.exports = function heapMarkersViteOxc(options = {}) {
         // fragile surgery of editing an existing import's specifier list.
         prelude.push(`import { ${specifiers.join(", ")} } from "react";`);
       }
-      if (emitsConfig) {
+      if (emitConfig) {
         prelude.push(configSource(configOpts));
       }
       if (prelude.length) s.prepend(prelude.join("\n") + "\n");

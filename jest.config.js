@@ -56,7 +56,9 @@ module.exports = {
             ],
             // Plugins run before presets, so the heap plugin sees the JSX and
             // the `react` import before preset-react/preset-env rewrite them.
-            plugins: [[path.resolve(__dirname, "babel-plugin.js"), {}]],
+            plugins: [
+              [path.resolve(__dirname, "packages/react/src/babel-plugin.js"), {}],
+            ],
           },
         ],
       },

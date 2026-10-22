@@ -1,5 +1,5 @@
 /**
- * Vite plugin: react-memory-leak-detector
+ * Vite plugin: @memleak/react
  *
  * First-class Vite integration. Rather than wiring the Babel plugin through
  * `@vitejs/plugin-react`'s `babel` option (which v6+ removed when it switched
@@ -31,7 +31,7 @@
  *
  *   import { defineConfig } from "vite";
  *   import react from "@vitejs/plugin-react";
- *   import heapMarkers from "react-memory-leak-detector/vite";
+ *   import heapMarkers from "@memleak/react";
  *
  *   export default defineConfig({
  *     plugins: [heapMarkers({ leakAgeMs: 5000 }), react()],
@@ -136,14 +136,14 @@ module.exports = function heapMarkersVite(options = {}) {
   const explicit = engine === "oxc" || engine === "babel";
   const chosen = resolveEngine(engine);
 
-  const makeBabel = () => require("./lib/engine-babel")(rest);
+  const makeBabel = () => require("./engine-babel")(rest);
 
   if (chosen === "babel") {
     banner("babel", silent);
     return withOrderingGuard(makeBabel(), silent);
   }
 
-  const engineOxc = require("./lib/engine-oxc");
+  const engineOxc = require("./engine-oxc");
   const oxc = engineOxc(rest);
 
   // An explicit `engine: "oxc"` respects the caller's choice: surface load

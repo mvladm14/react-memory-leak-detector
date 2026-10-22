@@ -14,7 +14,7 @@
  *
  * Requires `@babel/core`.
  */
-const babelPluginHeapMarkers = require("../babel-plugin");
+const babelPluginHeapMarkers = require("./babel-plugin");
 
 let babelRef;
 function getBabel() {

@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 // Importing the runtime installs `window.__heapTracker` and starts tracking.
 // `window.__heapTrackerOptions` was already set by the inline script in
 // index.html, so the runtime picks up the deterministic e2e config on install.
-import "react-memory-leak-detector/runtime";
+import "@memleak/core/runtime";
 import { App } from "./App";
 
 // Deterministic test hooks for Playwright. `collect()` forces GC in cycles —

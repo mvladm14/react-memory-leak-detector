@@ -1,4 +1,4 @@
-const heapMarkersVite = require("../vite");
+const heapMarkersVite = require("@memleak/react");
 const { oxcAvailable } = require("./oxc-available");
 
 // Tests that force (or assume) the Oxc engine can't run where oxc-parser isn't

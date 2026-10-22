@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>leak-detector Vue e2e fixture</title>
+    <script>
+      // Configure the runtime BEFORE it installs (config.ts reads this on load).
+      // A classic inline script runs before the deferred module scripts, so the
+      // options are in place before main.ts (and its runtime import) evaluate.
+      // These make the detector's verdict deterministic for the e2e:
+      //   leakAgeMs 0        — an unmounted-but-retained instance is stale at once
+      //   warnCooldownMs 0   — never debounce the warning/event
+      //   sweepIntervalMs ∞  — no background sweeps; the test drives forceGc()/sweep()
+      window.__heapTrackerOptions = {
+        leakAgeMs: 0,
+        suspectThreshold: 1,
+        warnCooldownMs: 0,
+        sweepIntervalMs: 1000000000,
+        logging: true,
+      };
+
+      // Present a no-op Vue Devtools hook BEFORE Vue initializes.
+      //
+      // Why this matters for the e2e: in a real browser with no devtools
+      // connected, Vue's dev build buffers every `component:added` event (each
+      // holding the component instance) in `window.__VUE_DEVTOOLS_HOOK_REPLAY__`
+      // and only clears that buffer ~3s later. With this fixture's aggressive
+      // `leakAgeMs: 0`, the test inspects a just-unmounted "fixed" component
+      // INSIDE that 3s window, so Vue's own buffer — not a real leak — keeps the
+      // instance (and our `$Heap` marker) alive, producing a false positive.
+      //
+      // A dev session with Vue Devtools actually open has no such buffer (events
+      // drain to the tool). We reproduce that here with a hook whose `emit`
+      // drops its args, so Vue drains + stops buffering immediately and the
+      // detector sees the real GC behavior. Real apps on the default
+      // `leakAgeMs` (10s) are unaffected — Vue clears the buffer at 3s, long
+      // before anything could be flagged.
+      window.__VUE_DEVTOOLS_GLOBAL_HOOK__ = {
+        enabled: true,
+        emit() {},
+        on() {},
+        off() {},
+        once() {},
+        appRecords: [],
+        apps: [],
+      };
+</script>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

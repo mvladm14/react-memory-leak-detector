@@ -16,6 +16,7 @@ services:
       - root_nm:/work/node_modules
       - e2e_nm:/work/e2e/node_modules
       - fixture_nm:/work/e2e/fixture/node_modules
+      - fixture_vue_nm:/work/e2e/fixture-vue/node_modules
     # CI=1 makes Playwright forbid `.only` and not reuse a stray dev server.
     environment:
       - CI=1
@@ -24,3 +25,4 @@ volumes:
   root_nm:
   e2e_nm:
   fixture_nm:
+  fixture_vue_nm:

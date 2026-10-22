@@ -1,4 +1,4 @@
-const heapMarkersVite = require("../vite");
+const heapMarkersVite = require("@memleak/react");
 const { oxcAvailable } = require("./oxc-available");
 
 // The default engine is Oxc; where oxc-parser isn't installable (Node < 20.19,

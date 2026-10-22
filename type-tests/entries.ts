@@ -6,14 +6,16 @@
  * the imports documented in the README; if any of those stop type-checking,
  * this fails in CI instead of in someone's editor.
  */
-import type { HeapMarkersOptions } from "../babel-plugin";
-import babelPluginHeapMarkers from "../babel-plugin";
-import type { HeapMarkersViteOptions } from "../vite";
-import heapMarkers from "../vite";
+import type { HeapMarkersOptions } from "@memleak/react/babel-plugin";
+import babelPluginHeapMarkers from "@memleak/react/babel-plugin";
+import type { HeapMarkersViteOptions } from "@memleak/react";
+import heapMarkers from "@memleak/react";
+import type { HeapMarkersVueOptions } from "@memleak/vue";
+import heapMarkersVue from "@memleak/vue";
 import type { Plugin } from "vite";
 
 // The runtime augments `Window` and exports its option/event types.
-import type { HeapTrackerOptions, LeakEvent } from "../dist/runtime";
+import type { HeapTrackerOptions, LeakEvent } from "@memleak/core/runtime";
 
 // Babel plugin options (README: `import type { HeapMarkersOptions }`).
 const babelOpts: HeapMarkersOptions = {
@@ -37,6 +39,21 @@ const viteOpts: HeapMarkersViteOptions = {
 // The Vite plugin returns a real Vite `Plugin`.
 const plugin: Plugin = heapMarkers(viteOpts);
 void plugin;
+
+// The Vue plugin has its own (React-independent) options and also returns a
+// real Vite `Plugin`.
+const vueOpts: HeapMarkersVueOptions = {
+  include: /\.vue$/,
+  exclude: /node_modules/,
+  apply: "serve",
+  silent: false,
+  excludeNames: [/^Legacy/],
+  excludeUnmountTracking: [/Cached$/],
+  leakAgeMs: 5000,
+  logging: false,
+};
+const vuePlugin: Plugin = heapMarkersVue(vueOpts);
+void vuePlugin;
 
 // Runtime globals are typed (no ambient shim needed).
 const runtimeOpts: Partial<HeapTrackerOptions> = { leakAgeMs: 5000, logging: false };

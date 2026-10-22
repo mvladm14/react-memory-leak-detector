@@ -7,22 +7,22 @@
 // and subscribers all share the same store / config copy).
 
 export type RuntimeModules = {
-  config: typeof import("../src/config");
-  store: typeof import("../src/store");
-  subscribers: typeof import("../src/subscribers");
-  lifecycle: typeof import("../src/lifecycle");
-  sweep: typeof import("../src/sweep");
+  config: typeof import("../packages/core/src/config");
+  store: typeof import("../packages/core/src/store");
+  subscribers: typeof import("../packages/core/src/subscribers");
+  lifecycle: typeof import("../packages/core/src/lifecycle");
+  sweep: typeof import("../packages/core/src/sweep");
 };
 
 export function loadRuntime(): RuntimeModules {
   let mods!: RuntimeModules;
   jest.isolateModules(() => {
     mods = {
-      config: require("../src/config"),
-      store: require("../src/store"),
-      subscribers: require("../src/subscribers"),
-      lifecycle: require("../src/lifecycle"),
-      sweep: require("../src/sweep"),
+      config: require("../packages/core/src/config"),
+      store: require("../packages/core/src/store"),
+      subscribers: require("../packages/core/src/subscribers"),
+      lifecycle: require("../packages/core/src/lifecycle"),
+      sweep: require("../packages/core/src/sweep"),
     };
   });
   return mods;

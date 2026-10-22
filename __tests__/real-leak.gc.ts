@@ -28,10 +28,10 @@ import { render, cleanup } from "@testing-library/react";
 
 // Importing the runtime installs `window.__heapTracker`, which the
 // babel-injected fixture code calls into.
-import "../src/runtime";
+import "../packages/core/src/runtime";
 
 import { installHarness, teardownHarness } from "./leak-harness";
-import type { LeakEvent, ReportRow } from "../src/types";
+import type { LeakEvent, ReportRow } from "../packages/core/src/types";
 
 import { CleanComponent } from "./fixtures/CleanComponent";
 import { ClosureLeakComponent } from "./fixtures/ClosureLeakComponent";

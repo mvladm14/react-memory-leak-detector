@@ -1,0 +1,27 @@
+{
+  "name": "@memleak/core",
+  "version": "1.3.0",
+  "private": true,
+  "description": "Framework-agnostic core for memleak: the WeakRef + FinalizationRegistry runtime leak tracker plus the shared build-time AST machinery (ESTree walk, marker/closure splicing, runtime-config, detection predicates) used by the per-framework adapters.",
+  "license": "MIT",
+  "author": "mvladm14",
+  "exports": {
+    ".": "./lib/index.js",
+    "./runtime": {
+      "types": "./dist/runtime.d.ts",
+      "default": "./dist/runtime.js"
+    }
+  },
+  "files": [
+    "lib/",
+    "dist/",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc"
+  },
+  "engines": {
+    "node": ">=16"
+  }
+}

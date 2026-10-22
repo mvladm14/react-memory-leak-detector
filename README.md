@@ -1,31 +1,50 @@
-# react-memory-leak-detector
+# memleak
 
-Catch React memory leaks the moment they happen — no heap snapshots required.
+Catch React **and Vue** memory leaks the moment they happen — no heap snapshots required.
 
 When a component unmounts but something still holds onto it (a stray timer,
 listener, subscription, or closure), you get a **console warning** right away and
 a **leak event** you can forward to your own logger or Sentry. Dev-only — it
 compiles out of production builds.
 
+The runtime tracker is framework-agnostic; a small build-time plugin per
+framework tags each component so the tracker can see it. React (components +
+hooks) and Vue 3 (`<script setup>` SFCs) are supported today.
+
+`memleak` is an npm-workspaces monorepo:
+
+| Package | What it is |
+| ------- | ---------- |
+| [`@memleak/core`](packages/core) | Framework-agnostic runtime tracker (`@memleak/core/runtime`) + shared build-time machinery. A dependency of the adapters. |
+| [`@memleak/react`](packages/react) | React Vite plugin + standalone Babel plugin. |
+| [`@memleak/vue`](packages/vue) | Vue 3 `<script setup>` Vite plugin. |
+
 ## Install
 
+Install the adapter for your framework — `@memleak/core` (which carries the
+runtime) comes along as a dependency:
+
 ```bash
-npm install --save-dev react-memory-leak-detector
+# React
+npm install --save-dev @memleak/react
+
+# Vue 3
+npm install --save-dev @memleak/vue
 ```
 
 ## Setup
 
-Two steps: add the build plugin, then import the runtime once in dev.
+Two steps: add the build plugin for your framework, then import the runtime once in dev.
 
 ### 1. Add the plugin
 
-**Vite**
+**React + Vite**
 
 ```ts
 // vite.config.ts
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
-import heapMarkers from "react-memory-leak-detector/vite";
+import heapMarkers from "@memleak/react";
 
 export default defineConfig({
   plugins: [
@@ -39,23 +58,44 @@ Dev-only by default, so nothing ships to production. Works with any
 `@vitejs/plugin-react` version (or none). Keep `heapMarkers()` before `react()` —
 it warns you at startup if the order is wrong.
 
-**Webpack / Next.js / Babel** — add the plugin to your Babel config, in development:
+**Vue 3 + Vite**
+
+```ts
+// vite.config.ts
+import { defineConfig } from "vite";
+import vue from "@vitejs/plugin-vue";
+import heapMarkers from "@memleak/vue";
+
+export default defineConfig({
+  plugins: [
+    heapMarkers(), // before vue()
+    vue(),
+  ],
+});
+```
+
+Instruments Vue 3 `<script setup>` SFCs. Dev-only by default. `heapMarkers()`
+runs at `enforce: "pre"` so it always sees the raw SFC before `@vitejs/plugin-vue`
+compiles it, regardless of array order. See [Vue coverage](#vue-coverage) for what
+is and isn't tracked.
+
+**Webpack / Next.js / Babel (React only)** — add the plugin to your Babel config, in development:
 
 ```json
 // .babelrc
-{ "env": { "development": { "plugins": ["react-memory-leak-detector/babel-plugin"] } } }
+{ "env": { "development": { "plugins": ["@memleak/react/babel-plugin"] } } }
 ```
 
 ### 2. Import the runtime
 
-Load it once at the top of your app entry, in dev only:
+Load it once at the top of your app entry, in dev only (same for both frameworks):
 
 ```js
 // Vite
-if (import.meta.env.DEV) import("react-memory-leak-detector/runtime");
+if (import.meta.env.DEV) import("@memleak/core/runtime");
 
 // Webpack / Next.js
-if (process.env.NODE_ENV === "development") import("react-memory-leak-detector/runtime");
+if (process.env.NODE_ENV === "development") import("@memleak/core/runtime");
 ```
 
 That's it. Type declarations are bundled, so TypeScript needs no extra setup.
@@ -126,6 +166,36 @@ Runtime options can also be changed live:
 | React Server Components                   | ⚠️ use `skipServerComponents: true`        |
 | Class components                          | ❌ not instrumented (PRs welcome)          |
 
+<a name="vue-coverage"></a>
+
+### Vue coverage
+
+The Vue plugin (`@memleak/vue`) instruments **Vue 3 `<script setup>` SFCs**. Each such
+component gets a `ComponentName$Heap` marker (named from the filename, or from
+`defineOptions({ name })`) plus `onMounted`/`onUnmounted` live tracking, and every
+closure defined in the script block captures the marker.
+
+| Vue case                                          | Status                                                              |
+| ------------------------------------------------- | ------------------------------------------------------------------- |
+| `<script setup>` SFCs                             | ✅                                                                  |
+| Composables/handlers/watchers defined in `<script setup>` | ✅ captured                                                 |
+| `defineComponent` / `setup()` / Options API       | ❌ not yet (only `<script setup>`)                                  |
+| Inline template handlers (`@click="() => …"`)     | ❌ compiled into the render fn; use a named script handler instead  |
+| `<KeepAlive>` / `<Suspense>` cached components     | ⚠️ `onUnmounted` may not fire → false positives; use `excludeUnmountTracking` |
+
+Options that don't apply to Vue (`trackHooks`, `skipServerComponents`, `engine`,
+`parserPlugins`) are React-only. Everything else — `leakAgeMs`, `logging`,
+`excludeNames`, `excludeUnmountTracking`, and the runtime — is shared.
+
+> **Vue Devtools & the first few seconds.** In dev with **no Vue Devtools
+> connected**, Vue's dev build briefly holds every mounted component instance in
+> an internal devtools "replay" buffer (`window.__VUE_DEVTOOLS_HOOK_REPLAY__`),
+> which it clears on its own about **3 seconds** after startup. During that
+> window a just-unmounted component can look retained even after it's cleaned up.
+> With the default `leakAgeMs` (10s) this never surfaces — the buffer is gone
+> long before anything is flagged. Only relevant if you set a very low
+> `leakAgeMs`: keep Vue Devtools open, or ignore the first few seconds after load.
+
 <details>
 <summary>Advanced — all options, API, engines, and how it works</summary>
 
@@ -179,13 +249,16 @@ engine parses with Babel and reads no project config, so non-default syntax
 engine parses these natively. `oxc-parser` needs Node ^20.19 or >=22.12.
 
 TypeScript option types are exported as `HeapMarkersOptions`
-(`/babel-plugin`) and `HeapMarkersViteOptions` (`/vite`).
+(`@memleak/react/babel-plugin`), `HeapMarkersViteOptions` (`@memleak/react`), and
+`HeapMarkersVueOptions` (`@memleak/vue`). The Vue plugin uses Oxc +
+`@vue/compiler-sfc` only (no Babel fallback).
 
 ### How it works
 
 1. The plugin tags every component/hook with a uniquely-named marker —
    searchable as `ComponentName$Heap` in heap snapshots — and injects a synthetic
-   `useEffect` that reports mount/unmount.
+   lifecycle hook that reports mount/unmount (React `useEffect`; Vue
+   `onMounted`/`onUnmounted`).
 2. The runtime holds each marker in a `WeakRef` + `FinalizationRegistry` and
    sweeps periodically.
 3. If a marker is still reachable well after its component unmounted, something

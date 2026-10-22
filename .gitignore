@@ -15,3 +15,4 @@ e2e/**/.last-run.json
 # Transient lockfiles from a native (non-Docker) run; installs are fresh each run.
 e2e/package-lock.json
 e2e/fixture/package-lock.json
+e2e/fixture-vue/package-lock.json

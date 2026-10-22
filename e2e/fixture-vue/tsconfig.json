@@ -1,13 +1,13 @@
 {
   "compilerOptions": {
     "target": "ES2021",
+    "lib": ["ES2021", "DOM", "DOM.Iterable"],
     "module": "ESNext",
     "moduleResolution": "Bundler",
-    "declaration": true,
-    "outDir": "./dist",
-    "rootDir": "./src",
     "strict": true,
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "noEmit": true,
+    "types": []
   },
-  "include": ["src/**/*"]
+  "include": ["src"]
 }

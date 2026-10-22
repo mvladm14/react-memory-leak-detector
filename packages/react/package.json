@@ -1,0 +1,59 @@
+{
+  "name": "@memleak/react",
+  "version": "1.3.0",
+  "private": true,
+  "description": "React adapter for memleak. A Vite plugin (Oxc or Babel engine) that tags every React component/hook with a uniquely-named heap marker, plus the standalone Babel plugin. Pair with @memleak/core/runtime.",
+  "keywords": [
+    "react",
+    "memory-leak",
+    "leak-detection",
+    "vite-plugin",
+    "babel-plugin"
+  ],
+  "license": "MIT",
+  "author": "mvladm14",
+  "main": "src/vite.js",
+  "types": "types/vite.d.ts",
+  "exports": {
+    ".": {
+      "types": "./types/vite.d.ts",
+      "default": "./src/vite.js"
+    },
+    "./babel-plugin": {
+      "types": "./types/babel-plugin.d.ts",
+      "default": "./src/babel-plugin.js"
+    }
+  },
+  "files": [
+    "src/",
+    "types/",
+    "README.md",
+    "LICENSE"
+  ],
+  "dependencies": {
+    "@memleak/core": "*"
+  },
+  "optionalDependencies": {
+    "magic-string": "^1.1.0",
+    "oxc-parser": "^0.143.0"
+  },
+  "peerDependencies": {
+    "@babel/core": "^7.23.0",
+    "react": ">=16.8.0",
+    "vite": ">=4"
+  },
+  "peerDependenciesMeta": {
+    "@babel/core": {
+      "optional": true
+    },
+    "react": {
+      "optional": true
+    },
+    "vite": {
+      "optional": true
+    }
+  },
+  "engines": {
+    "node": ">=16"
+  }
+}

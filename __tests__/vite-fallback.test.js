@@ -3,7 +3,7 @@
 // Node, missing native binding) — not merely if it can't be resolved. Simulate
 // an unloadable Oxc engine and assert the auto-detect path degrades to Babel.
 
-jest.mock("../lib/engine-oxc", () => {
+jest.mock("../packages/react/src/engine-oxc", () => {
   const OXC_UNAVAILABLE = "ERR_HEAP_OXC_UNAVAILABLE";
   const factory = () => ({
     name: "react-memory-leak-detector",
@@ -19,7 +19,7 @@ jest.mock("../lib/engine-oxc", () => {
   return factory;
 });
 
-const heapMarkersVite = require("../vite");
+const heapMarkersVite = require("@memleak/react");
 const { oxcAvailable } = require("./oxc-available");
 
 // The auto-detect → Oxc-chosen → load-fails → Babel path is only reachable when

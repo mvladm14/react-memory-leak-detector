@@ -1,9 +1,13 @@
 import { expect, test } from "@playwright/test";
 
-// Labels the run with the matrix combo under test (set by run.mjs).
-const COMBO = `plugin-react ${process.env.PLUGIN_REACT || "v6"} / engine ${
-  process.env.HEAP_ENGINE || "auto"
-}`;
+// Labels the run with the matrix combo under test (set by run.mjs). The Vue leg
+// has no plugin/engine matrix, so it gets a simpler label.
+const COMBO =
+  process.env.FRAMEWORK === "vue"
+    ? "vue / engine oxc"
+    : `plugin-react ${process.env.PLUGIN_REACT || "v6"} / engine ${
+        process.env.HEAP_ENGINE || "auto"
+      }`;
 
 // Shapes of the window hooks the fixture installs (see fixture/src/main.tsx).
 type LeakEvent = { component: string; stale: number; live: number };

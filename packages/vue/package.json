@@ -1,0 +1,54 @@
+{
+  "name": "@memleak/vue",
+  "version": "1.3.0",
+  "private": true,
+  "description": "Vue 3 adapter for memleak. A Vite plugin that tags every Vue <script setup> component with a uniquely-named heap marker + onMounted/onUnmounted tracking (Oxc + @vue/compiler-sfc). Pair with @memleak/core/runtime.",
+  "keywords": [
+    "vue",
+    "memory-leak",
+    "leak-detection",
+    "vite-plugin"
+  ],
+  "license": "MIT",
+  "author": "mvladm14",
+  "main": "src/vue.js",
+  "types": "types/vue.d.ts",
+  "exports": {
+    ".": {
+      "types": "./types/vue.d.ts",
+      "default": "./src/vue.js"
+    }
+  },
+  "files": [
+    "src/",
+    "types/",
+    "README.md",
+    "LICENSE"
+  ],
+  "dependencies": {
+    "@memleak/core": "*"
+  },
+  "optionalDependencies": {
+    "magic-string": "^1.1.0",
+    "oxc-parser": "^0.143.0"
+  },
+  "peerDependencies": {
+    "@vue/compiler-sfc": "^3.0.0",
+    "vite": ">=4",
+    "vue": ">=3.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@vue/compiler-sfc": {
+      "optional": true
+    },
+    "vite": {
+      "optional": true
+    },
+    "vue": {
+      "optional": true
+    }
+  },
+  "engines": {
+    "node": ">=16"
+  }
+}

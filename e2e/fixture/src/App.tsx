@@ -24,7 +24,7 @@ export function App() {
 
   return (
     <div>
-      <h1>react-memory-leak-detector — e2e fixture</h1>
+      <h1>@memleak/react — e2e fixture</h1>
       <div>
         <button data-testid="toggle-leaky" onClick={() => setLeaky((v) => !v)}>
           {leaky ? "Unmount" : "Mount"} LeakyTimer
