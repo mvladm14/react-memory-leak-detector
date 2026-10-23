@@ -60,6 +60,20 @@ if (process.env.NODE_ENV === "development") import("react-memory-leak-detector/r
 
 That's it. Type declarations are bundled, so TypeScript needs no extra setup.
 
+The dynamic `import()` resolves after React's first render, so the app shell and
+whatever else is in the initial tree render before the tracker exists. That's
+fine: the runtime adopts any component it first sees at mount or unmount, so
+those components are tracked and their leaks reported like any other. To call
+the tracker API from your entry file (e.g. `subscribe`), wait for the import:
+
+```js
+if (import.meta.env.DEV) {
+  import("react-memory-leak-detector/runtime").then(() => {
+    window.__heapTracker?.subscribe((event) => console.log("leak", event));
+  });
+}
+```
+
 ## Getting leaks
 
 On page load the tracker installs, and leaks show up as console warnings as they
@@ -78,13 +92,16 @@ components. Two numbers matter:
 Prefer to handle leaks yourself — a debug overlay, your logger, Sentry? Subscribe:
 
 ```ts
-const unsubscribe = window.__heapTracker.subscribe((event) => {
+const unsubscribe = window.__heapTracker?.subscribe((event) => {
   // { component, stale, live, leakAgeMs, at }
   Sentry.captureMessage(`heap-leak:${event.component}`, { extra: event });
 });
 ```
 
-Events fire only for stale leaks and are debounced per component.
+Events fire only for stale leaks and are debounced per component. The global
+is typed as optional (it only exists once the runtime import has resolved), so
+subscribe from the import's `.then()` or anywhere after it — not on the line
+right after a fire-and-forget `import()`.
 `configure({ logging: false })` keeps the events but silences the console.
 
 ## Finding the cause

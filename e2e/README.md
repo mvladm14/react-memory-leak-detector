@@ -18,6 +18,10 @@ What it does, per run:
    (leak event **and** console warning); mounts/unmounts a **fixed** twin and
    asserts it stays silent and is garbage-collected. The fixed twin is the
    false-positive guard.
+5. Loads a second entry, **`/late.html`**, that installs the runtime with the
+   README's fire-and-forget `import()` (so it arrives *after* the first render)
+   and mounts a leaky component in the initial tree. Asserts the runtime adopts
+   that component and still flags it after unmount.
 
 ## The matrix
 
@@ -65,6 +69,8 @@ SKIP_INSTALL=1 node e2e/run.mjs v5:babel   # reuse an already-prepared install
 ```
 e2e/
   fixture/            self-contained Vite + React app (leaky + fixed components)
+    index.html        runtime imported statically (src/main.tsx)
+    late.html         runtime loaded via the README's dynamic import() (src/late.tsx)
   playwright/         the leak spec
   playwright.config.ts  launches Chromium with --expose-gc; boots the fixture dev server
   run.mjs             pack → install tarball → run the matrix

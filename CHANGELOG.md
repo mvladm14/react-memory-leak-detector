@@ -7,6 +7,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-10-23
+
+### Fixed
+
+- **Default-parameter callbacks no longer crash.** Both the Babel plugin and
+  the Oxc engine injected the `_heap_ && 0` closure capture into closures
+  declared in a component's or hook's *own* parameter list (e.g.
+  `function Item({ onSelect = () => {} })`, `useFormat(fmt = (v) => String(v))`).
+  Parameter expressions get their own environment and can't see the body's
+  `var _heap_`, so invoking the default threw
+  `ReferenceError: _heap_ is not defined` — a hard crash in dev for the common
+  default-callback-prop idiom. Those closures are now left untouched; closures
+  in the body (including defaults of nested helper functions) are still
+  captured. The Babel plugin now decides by scope rather than by position: a
+  closure captures `_heap_` only when it sits lexically inside the block that
+  declares it. That keeps the rule correct in same-pass Babel setups where
+  `@babel/preset-env` downlevels default parameters into the body (and, when a
+  body binding shadows a parameter name, wraps the body in an IIFE and leaves
+  the lowered defaults outside it), regardless of how other transforms clone
+  or rebuild the closure nodes. Both engines also agree on a nested
+  instrumented function's own params: never captured. Covered by transform
+  tests for both engines (including rendered preset-env same-pass cases with
+  arrow, object-method, class and generator defaults) and a runtime test that
+  renders a component with default callbacks through the real plugin.
+- **Babel plugin: duplicate `_heap_ && 0;` capture in same-pass setups.** When
+  the plugin ran in the same Babel pass as `@babel/preset-react` (webpack/Next
+  `.babelrc`, babel-jest), an arrow function inside a JSX attribute received the
+  closure-capture statement twice: preset-react replaces the JSX element with a
+  `createElement()` call and Babel re-queues the new subtree, so the same arrow
+  node reached the plugin's visitor a second time. The plugin now remembers
+  which closures it has already injected into and skips re-visits. Harmless at
+  runtime, but it inflated output and made capture counts unreliable. The Oxc
+  engine (single-pass string splice) was never affected.
+- **Components rendered before the runtime loads were never tracked.** The
+  documented install (`if (import.meta.env.DEV) import("…/runtime")`) resolves
+  after React's first render and commit, so every component in the initial
+  tree (app shell, layouts, landing route) called `track()` while
+  `window.__heapTracker` was still absent; the injected code never retries,
+  and `markMounted` / `markUnmounted` ignored unknown instances. Their leaks
+  were silently dropped. The runtime now adopts an instance it has not seen on
+  its first `markMounted` / `markUnmounted`, recovering the component name from
+  the `ComponentName$Heap` marker constructor (an instance first seen at
+  unmount is recorded as already unmounted, so the sweep can judge it). No
+  change to the injected code or to tracking of components rendered after the
+  runtime loaded. Covered by unit tests, a real-GC suite that renders before
+  importing the runtime, and an e2e entry (`e2e/fixture/late.html`) that
+  installs the runtime with the README's dynamic `import()`.
+- README: `window.__heapTracker.subscribe(...)` placed right after the
+  fire-and-forget `import()` threw (the tracker was not installed yet) and did
+  not type-check (the global is optional). The snippets now chain `.then()` on
+  the import and use `window.__heapTracker?.subscribe`; both forms are covered
+  by `npm run typecheck`.
+
 ## [1.3.0] - 2026-08-07
 
 ### Changed

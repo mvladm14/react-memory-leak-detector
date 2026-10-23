@@ -48,3 +48,24 @@ if (typeof window !== "undefined") {
   });
   void unsubscribe;
 }
+
+// README "Import the runtime": subscribe once the dynamic import has resolved.
+// `window.__heapTracker` is typed optional, so the README's `?.` form is what
+// type-checks under strict TS (a bare `window.__heapTracker.subscribe` would
+// not, and would throw at runtime before the import resolves).
+declare const DEV: boolean;
+if (DEV) {
+  import("../dist/runtime").then(() => {
+    window.__heapTracker?.subscribe((event) => console.log("leak", event));
+  });
+}
+
+// README "Getting leaks": the Sentry-style subscriber, with an unsubscribe.
+declare const Sentry: {
+  captureMessage(message: string, context: { extra: unknown }): void;
+};
+const unsubscribeSentry = window.__heapTracker?.subscribe((event) => {
+  // { component, stale, live, leakAgeMs, at }
+  Sentry.captureMessage(`heap-leak:${event.component}`, { extra: event });
+});
+void unsubscribeSentry;
