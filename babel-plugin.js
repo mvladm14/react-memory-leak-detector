@@ -22,6 +22,10 @@
  *    This forces V8 to capture _heap_ in the closure's scope chain.
  *    (We use `_heap_ && 0` instead of `void _heap_` because esbuild
  *    strips void expressions as dead code.)
+ *    Closures in the component's/hook's OWN parameter list (default values
+ *    such as `{ onSelect = () => {} }`) are left alone: parameter
+ *    expressions get their own environment and can't see the body's
+ *    `var _heap_`, so capturing there would throw ReferenceError.
  *
  * If a closure leaks (e.g., useEffect without cleanup), the closure retains
  * _heap_, which retains the ComponentName$Heap instance. In heap snapshots:
@@ -117,6 +121,35 @@ module.exports = function babelPluginHeapMarkers({ types: t }, options = {}) {
   // twice. The Oxc engine never sees these nodes (it splices the effect as
   // text), so skipping them keeps the two engines' output at parity.
   const syntheticClosures = new WeakSet();
+  // Track closures Phase 2 has ALREADY injected `_heap_ && 0` into, plus the
+  // block bodies that now hold the capture. Babel re-queues a subtree whenever
+  // another plugin replaces an ancestor node in the same pass — e.g.
+  // @babel/preset-react turning `<button onClick={() => ...}>` into a
+  // createElement() call — so the same closure node can reach our visitor a
+  // second time. Without this guard it would get a second capture statement.
+  // Parse-only setups (the Vite engine, the unit tests) never re-visit, which
+  // is why the duplicate only showed up in webpack/Next/babel-jest pipelines.
+  // The body block is tracked too so a later arrow→function conversion
+  // (preset-env with old targets) that reuses the block stays deduplicated.
+  const capturedClosures = new WeakSet();
+  // The BlockStatements that received a marker, i.e. the blocks that declare
+  // `var _heap_`. Phase 2 captures a closure iff it sits lexically inside one
+  // of these blocks (and no instrumented function node comes first on the way
+  // up). That is exactly where `_heap_` is in scope, so it is the one rule
+  // that stays correct whatever other plugins do in the same pass:
+  //   • closures in an instrumented function's OWN parameter list (default
+  //     values such as `{ onSelect = () => {} }`) are outside the block —
+  //     parameter expressions get their own environment and can't see body
+  //     vars, so a capture there would throw ReferenceError;
+  //   • when @babel/preset-env lowers default params into the body, the
+  //     lowered closures land inside this block (capture is safe) — except
+  //     in the body-shadows-a-param-name case, where the transform wraps the
+  //     original block in an IIFE and puts the lowered defaults outside it:
+  //     the block object is reused as the IIFE body, so the rule still holds;
+  //   • it doesn't depend on node identity or tags on the closure itself,
+  //     which transforms like destructuring (cloneNode), shorthand-properties,
+  //     classes and async-to-generator do not preserve.
+  const markerBlocks = new WeakSet();
 
   // Detection predicates are shared with the Oxc engine via ./lib/predicates so
   // the two engines can't drift. The file-gate helpers close over this plugin's
@@ -392,6 +425,7 @@ module.exports = function babelPluginHeapMarkers({ types: t }, options = {}) {
 
     // Prepend at the top of the component body
     bodyPath.unshiftContainer("body", statements);
+    markerBlocks.add(bodyPath.node);
   }
 
   /**
@@ -407,6 +441,8 @@ module.exports = function babelPluginHeapMarkers({ types: t }, options = {}) {
       t.logicalExpression("&&", t.identifier("_heap_"), t.numericLiteral(0))
     );
 
+    capturedClosures.add(fnPath.node);
+
     if (fnPath.isArrowFunctionExpression()) {
       const body = fnPath.get("body");
       if (body.isBlockStatement()) {
@@ -421,14 +457,15 @@ module.exports = function babelPluginHeapMarkers({ types: t }, options = {}) {
       // FunctionExpression or FunctionDeclaration — always block body
       fnPath.get("body").unshiftContainer("body", captureExpr);
     }
+
+    // Record the (possibly freshly synthesized) block so a re-visit via a
+    // different function node that still owns this block is also skipped.
+    capturedClosures.add(fnPath.node.body);
   }
 
   /**
-   * Checks if this function path is nested inside a component that has _heap_.
-   * Uses findParent to walk up the AST — this is independent of Babel's scope
-   * system, which may not reflect dynamically injected bindings.
-   *
-   * Returns true if an ancestor function is in the componentFunctions WeakSet.
+   * Decides whether a nested closure should capture `_heap_`: true iff it is
+   * lexically inside the block that declares `_heap_` (see markerBlocks).
    */
   function shouldInjectVoidHeap(fnPath) {
     // Don't inject into instrumented functions (components/hooks) themselves
@@ -437,19 +474,22 @@ module.exports = function babelPluginHeapMarkers({ types: t }, options = {}) {
     if (markerConstructors.has(fnPath.node)) return false;
     // Don't inject into closures we synthesized (the unmount effect)
     if (syntheticClosures.has(fnPath.node)) return false;
-
-    // Walk up the AST to find a parent component or hook function
-    const parentInstrumented = fnPath.findParent(
-      (p) =>
-        (p.isFunctionDeclaration() ||
-          p.isArrowFunctionExpression() ||
-          p.isFunctionExpression() ||
-          p.isObjectMethod() ||
-          p.isClassMethod()) &&
-        instrumentedFunctions.has(p.node)
+    // Don't inject twice when Babel re-visits a closure after another plugin
+    // replaced an ancestor (see capturedClosures above)
+    if (capturedClosures.has(fnPath.node)) return false;
+    if (capturedClosures.has(fnPath.node.body)) return false;
+    // Walk up to the nearest ancestor that is either a block declaring
+    // `var _heap_` or an instrumented function node. Reaching the block first
+    // means the closure is lexically inside that function's body, where
+    // `_heap_` is in scope: capture. Reaching the function node first means
+    // the closure sits in its parameter list (default values), where body
+    // vars are NOT visible: never capture there (see markerBlocks above).
+    // Walking the AST rather than Babel's scope keeps this independent of
+    // bindings injected mid-traversal.
+    const anchor = fnPath.findParent(
+      (p) => markerBlocks.has(p.node) || instrumentedFunctions.has(p.node)
     );
-
-    return parentInstrumented !== null;
+    return anchor !== null && markerBlocks.has(anchor.node);
   }
 
   return {
@@ -584,6 +624,9 @@ module.exports = function babelPluginHeapMarkers({ types: t }, options = {}) {
       // Handle: function useMyHook() { ... }
       FunctionDeclaration(fnPath, state) {
         if (state.skipFile) return;
+        // Already instrumented on an earlier visit (Babel re-queues subtrees
+        // another plugin replaced in the same pass) — never inject twice.
+        if (instrumentedFunctions.has(fnPath.node)) return;
 
         // ─── Phase 1: is this declaration itself a component or hook? ───
         // The injected marker uses useRef + useEffect, so files that don't
@@ -662,6 +705,9 @@ module.exports = function babelPluginHeapMarkers({ types: t }, options = {}) {
         // Only components need JSX check; hooks don't
         if (!isHook && !containsJSX(fnPath)) return;
 
+        // Phase 1 can be re-run on the same node when another plugin replaces
+        // an ancestor in the same pass; never inject the marker twice.
+        if (instrumentedFunctions.has(fnPath.node)) return;
         instrumentedFunctions.add(fnPath.node);
         const bodyPath = ensureBlockBody(fnPath);
         injectMarkerVariable(bodyPath, name, state);

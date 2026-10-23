@@ -2,6 +2,7 @@ import { useState } from "react";
 import { FixedAnimationFrame } from "./components/FixedAnimationFrame";
 import { FixedListeners } from "./components/FixedListeners";
 import { FixedPromise } from "./components/FixedPromise";
+import { DefaultCallback } from "./components/DefaultCallback";
 import { FixedTimer } from "./components/FixedTimer";
 import { LeakyAnimationFrame } from "./components/LeakyAnimationFrame";
 import { LeakyListeners } from "./components/LeakyListeners";
@@ -21,6 +22,7 @@ export function App() {
   const [fixedListeners, setFixedListeners] = useState(false);
   const [leakyPromise, setLeakyPromise] = useState(false);
   const [fixedPromise, setFixedPromise] = useState(false);
+  const [defaultCallback, setDefaultCallback] = useState(false);
 
   return (
     <div>
@@ -79,6 +81,15 @@ export function App() {
         </button>
       </div>
 
+      <div>
+        <button
+          data-testid="toggle-default-callback"
+          onClick={() => setDefaultCallback((v) => !v)}
+        >
+          {defaultCallback ? "Unmount" : "Mount"} DefaultCallback
+        </button>
+      </div>
+
       <div data-testid="stage">
         {leaky && <LeakyTimer />}
         {fixed && <FixedTimer />}
@@ -88,6 +99,7 @@ export function App() {
         {fixedListeners && <FixedListeners />}
         {leakyPromise && <LeakyPromise />}
         {fixedPromise && <FixedPromise />}
+        {defaultCallback && <DefaultCallback />}
       </div>
     </div>
   );

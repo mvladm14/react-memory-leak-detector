@@ -281,3 +281,93 @@ describeOxc("Oxc engine specifics", () => {
     expect(result.code).toContain("_heap_ && 0;");
   });
 });
+
+describe("default-parameter closures (both engines)", () => {
+  // Closures in an instrumented function's OWN parameter list can't see the
+  // body's `var _heap_` (parameter expressions get a separate environment), so
+  // injecting `_heap_ && 0` there throws ReferenceError when the default runs.
+  // Both engines must leave those closures alone and still capture body ones.
+  const count = (code) => (code.match(/_heap_ && 0;/g) || []).length;
+
+  const defaultProp = `
+    import React from "react";
+    export function Item({ label, onSelect = () => {} }) {
+      return <button onClick={() => onSelect(label)}>{label}</button>;
+    }
+  `;
+  const defaultHookParam = `
+    import { useMemo } from "react";
+    export function useFormat(fmt = (v) => String(v)) {
+      return useMemo(() => fmt, [fmt]);
+    }
+  `;
+  const nestedHelper = `
+    import React from "react";
+    export function Item() {
+      const helper = (cb = () => {}) => cb();
+      return <div onClick={() => helper()} />;
+    }
+  `;
+
+  const nestedComponent = `
+    import React from "react";
+    export function Outer() {
+      function Inner({ onSelect = () => {} }) {
+        return <button onClick={onSelect} />;
+      }
+      return <Inner />;
+    }
+  `;
+
+  for (const engine of ["babel", "oxc"]) {
+    const run = engine === "oxc" ? itOxc : it;
+
+    run(`${engine}: never captures in a nested instrumented function's own params`, async () => {
+      // Inner is itself instrumented and sits inside instrumented Outer. Its
+      // default closure could legally see Outer's _heap_, but both engines
+      // must agree, and the simple deterministic rule is: an instrumented
+      // function's own params are never captured.
+      const { code } = await transform(
+        heapMarkersVite({ engine }),
+        nestedComponent,
+        "/app/src/Outer.tsx",
+      );
+      expectMarkers(code, "Outer");
+      expectMarkers(code, "Inner");
+      expect(code).toContain("onSelect = () => {}");
+      expect(count(code)).toBe(0);
+    });
+
+    run(`${engine}: leaves a component's default-callback prop untouched`, async () => {
+      const { code } = await transform(
+        heapMarkersVite({ engine }),
+        defaultProp,
+        "/app/src/Item.tsx",
+      );
+      expectMarkers(code, "Item");
+      expect(code).toContain("onSelect = () => {}");
+      expect(count(code)).toBe(1);
+    });
+
+    run(`${engine}: leaves a hook's default parameter untouched`, async () => {
+      const { code } = await transform(
+        heapMarkersVite({ engine }),
+        defaultHookParam,
+        "/app/src/useFormat.ts",
+      );
+      expect(code).toContain("function useFormat$Heap()");
+      expect(code).toMatch(/fmt = \(?v\)? => String\(v\)/);
+      expect(count(code)).toBe(1);
+    });
+
+    run(`${engine}: still captures defaults of nested non-instrumented functions`, async () => {
+      const { code } = await transform(
+        heapMarkersVite({ engine }),
+        nestedHelper,
+        "/app/src/Item.tsx",
+      );
+      expect(code).toMatch(/cb = \(\) => \{\s*_heap_ && 0;/);
+      expect(count(code)).toBe(3);
+    });
+  }
+});

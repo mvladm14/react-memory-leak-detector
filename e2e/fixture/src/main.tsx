@@ -14,6 +14,8 @@ declare global {
   interface Window {
     __leakTest?: {
       events: unknown[];
+      /** late.tsx only: was the runtime installed when the initial tree rendered? */
+      trackerAtRender?: boolean;
       collect(cycles?: number): Promise<{ events: unknown[]; report: unknown[] }>;
     };
   }
