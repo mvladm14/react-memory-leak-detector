@@ -73,9 +73,14 @@ afterEach(() => {
 });
 
 describe("oxc-parser installed but fails to load (auto-detect)", () => {
+  // Independent of the real node_modules: on Node <20.19 npm skips the
+  // optional oxc-parser, and the dispatcher would take its "not installed"
+  // path before the mocked load failure above can fire.
+  const installed = { oxcResolvable: () => true };
+
   it("without @babel/core: one combined error, and no misleading fallback warning", async () => {
     mockBabelAvailable = false;
-    const engine = createEngine({});
+    const engine = createEngine({}, installed);
     const error = await engine.transform(COMPONENT, FILE).catch((e) => e);
     expect(error.code).toBe(NO_ENGINE);
     expect(error.message).toContain("simulated: native binding missing");
@@ -90,7 +95,7 @@ describe("oxc-parser installed but fails to load (auto-detect)", () => {
   });
 
   it("with @babel/core: falls back, warning with the reason but no `engine` advice", async () => {
-    const engine = createEngine({});
+    const engine = createEngine({}, installed);
     const result = await engine.transform(COMPONENT, FILE);
     expect(result.code).toContain("/* babel */");
     expect(warn).toHaveBeenCalledTimes(1);
