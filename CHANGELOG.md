@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-11-08
+
 ### Added
 
 - **Next.js integration** at `react-memory-leak-detector/next`:
@@ -305,7 +307,10 @@ leakAgeMs, at }` only for stale leaks (instances unmounted ≥ `leakAgeMs` ago
   `subscribers`, `sweep`) with `runtime.ts` as the entry that wires the API
   and starts the sweep loop. No change to the public surface.
 
-[Unreleased]: https://github.com/mvladm14/react-memory-leak-detector/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/mvladm14/react-memory-leak-detector/compare/v1.4.0...HEAD
+[1.4.0]: https://github.com/mvladm14/react-memory-leak-detector/compare/v1.3.1...v1.4.0
+[1.3.1]: https://github.com/mvladm14/react-memory-leak-detector/compare/v1.3.0...v1.3.1
+[1.3.0]: https://github.com/mvladm14/react-memory-leak-detector/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/mvladm14/react-memory-leak-detector/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/mvladm14/react-memory-leak-detector/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/mvladm14/react-memory-leak-detector/compare/v0.2.0...v1.0.0
