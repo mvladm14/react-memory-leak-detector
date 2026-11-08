@@ -11,6 +11,8 @@ import babelPluginHeapMarkers from "../babel-plugin";
 import type { HeapMarkersViteOptions } from "../vite";
 import heapMarkers from "../vite";
 import type { Plugin } from "vite";
+import type { HeapMarkersNextOptions } from "../next";
+import withHeapMarkers from "../next";
 
 // The runtime augments `Window` and exports its option/event types.
 import type { HeapTrackerOptions, LeakEvent } from "../dist/runtime";
@@ -37,6 +39,29 @@ const viteOpts: HeapMarkersViteOptions = {
 // The Vite plugin returns a real Vite `Plugin`.
 const plugin: Plugin = heapMarkers(viteOpts);
 void plugin;
+
+// Next.js wrapper: options extend the Babel options; the config type flows
+// through unchanged (object form and `(phase, ctx) => config` form).
+const nextOpts: HeapMarkersNextOptions = {
+  ...babelOpts,
+  engine: "babel",
+  exclude: /generated/,
+  silent: true,
+};
+interface MyNextConfig {
+  reactStrictMode?: boolean;
+  images?: { unoptimized?: boolean };
+}
+const nextConfig: MyNextConfig = { reactStrictMode: true };
+const wrappedConfig: MyNextConfig = withHeapMarkers(nextConfig, nextOpts);
+void wrappedConfig;
+const wrappedFn: (phase: string) => Promise<MyNextConfig> = withHeapMarkers(
+  (phase: string): MyNextConfig => ({ reactStrictMode: phase !== "x" }),
+);
+void wrappedFn;
+void withHeapMarkers.withHeapMarkers({}, { leakAgeMs: 5000 });
+// @ts-expect-error — unknown option
+withHeapMarkers({}, { notAnOption: true });
 
 // Runtime globals are typed (no ambient shim needed).
 const runtimeOpts: Partial<HeapTrackerOptions> = { leakAgeMs: 5000, logging: false };

@@ -64,6 +64,64 @@ node e2e/run.mjs v6:oxc     # one combo
 SKIP_INSTALL=1 node e2e/run.mjs v5:babel   # reuse an already-prepared install
 ```
 
+## Next.js matrix
+
+`e2e/next/` runs the same idea against **real Next.js apps** using the
+`react-memory-leak-detector/next` wrapper. A single fixture (`next/fixture/`) is
+copied into `next/.work/<version>/` and installed once per Next version, because
+`next` can't be installed side by side under npm aliases.
+
+| Combo | Bundler | Notes |
+| ----- | ------- | ----- |
+| `next16:turbopack` | Turbopack | `next dev` default on 16 |
+| `next16:webpack` | webpack | `next dev --webpack` |
+| `next15:turbopack` | Turbopack | `"use client"`-only fallback (15.x ignores the `browser` rule condition) |
+| `next15:webpack` | webpack | `next dev` default on 15 |
+| `next15.3:turbopack` | Turbopack | Oldest supported Turbopack (pinned to 15.3.x); same fallback, and only the loader's own check keeps production builds clean |
+| `next14:webpack` | webpack | React 18, `moduleResolution: "node"` tsconfig, runtime loaded from a `"use client"` component |
+
+Per combo, `next/run.mjs`:
+
+1. Starts `next dev` itself and logs its output to `next/logs/`.
+2. Runs `next/playwright/next.spec.ts` in headless Chromium (`--expose-gc`):
+   - **App Router:** a Server Component that imports from `react` renders (it
+     must not be instrumented), the `withHeapMarkers()` options reach the
+     runtime, `LeakyTimer` is flagged (event and console warning), and
+     `FixedTimer` is garbage-collected without being flagged.
+   - **Shared component:** `Label` has no directive and renders as both a
+     Server and a Client Component. It must be instrumented in the browser,
+     except on Next 15's Turbopack fallback (15.3 and 15.5), where it must not be.
+   - **Pages Router (`/legacy`):** the runtime loaded from `_app` flags the leak.
+   - No page errors or `console.error` output (e.g. hydration mismatches).
+3. Fails if the dev-server log contains errors. Some regressions only show up
+   there: when the runtime can't be loaded by Node during SSR, every page still
+   returns 200.
+4. Runs `next build` for the same bundler. It must succeed (including Next's
+   type check) and the output must contain no heap markers.
+
+The fixture uses `next/font/local` (SWC-only under webpack) with a font file
+copied from the installed `next` package, so the suite needs no network access
+beyond npm.
+
+Run it:
+
+```bash
+cd e2e && docker compose run --build --rm e2e sh -c "npm ci && node e2e/next/run.mjs"
+cd e2e && docker compose run --build --rm e2e sh -c "npm ci && node e2e/next/run.mjs next16:webpack"
+```
+
+Natively (needs Node ≥20.19 and `npx playwright install chromium`, or point
+`CHROMIUM_PATH` at a local Chromium):
+
+```bash
+node e2e/next/run.mjs                       # full matrix
+node e2e/next/run.mjs next14:webpack        # one combo
+SKIP_INSTALL=1 node e2e/next/run.mjs next16:turbopack   # reuse the installs
+```
+
+`SKIP_INSTALL=1` reuses the installed tarball. Rebuild it (drop the flag) after
+changing the detector itself; fixture edits are picked up either way.
+
 ## Layout
 
 ```
@@ -74,6 +132,11 @@ e2e/
   playwright/         the leak spec
   playwright.config.ts  launches Chromium with --expose-gc; boots the fixture dev server
   run.mjs             pack → install tarball → run the matrix
+  next/
+    fixture/          Next.js app (App + Pages Router) shared by every Next version
+    playwright/       the Next.js spec
+    playwright.config.ts  no webServer: run.mjs starts `next dev` and reads its log
+    run.mjs           pack → install per Next version → dev + spec + log check + build
   Dockerfile          Node 22 + Playwright Chromium
   docker-compose.yml  bind-mounts the repo, keeps node_modules in named volumes
 ```
@@ -81,7 +144,7 @@ e2e/
 ## Cleaning up
 
 The harness keeps `node_modules` in **named Docker volumes** (`root_nm`, `e2e_nm`,
-`fixture_nm`) and reuses the **built image** across runs so repeat runs are fast.
+`fixture_nm`, and `next_work` for the Next.js installs) and reuses the **built image** across runs so repeat runs are fast.
 Both persist until you remove them. One command drops the named volumes **and**
 the locally-built image:
 
@@ -92,7 +155,8 @@ cd e2e && docker compose down -v --rmi local
 `docker compose run --rm` already removes the run container each time, so nothing
 else lingers. If you ever run the matrix **natively** (not in Docker), it leaves
 `e2e/node_modules`, `e2e/fixture/node_modules`, a packed `*.tgz`, and generated
-`package-lock.json`s — all gitignored, removable with `git clean -Xdf e2e`.
+`package-lock.json`s — all gitignored, removable with `git clean -Xdf e2e`. The
+Next.js matrix adds `e2e/next/.work/` and `e2e/next/logs/`, also gitignored.
 
 ## Why GC is deterministic here
 

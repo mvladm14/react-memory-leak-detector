@@ -1,7 +1,8 @@
 # Mount the repo into the harness container and run the leak-detector matrix.
 #
-#   cd e2e && docker compose run --rm e2e                 # full 2x2 matrix
+#   cd e2e && docker compose run --rm e2e                 # full 2x2 Vite matrix
 #   cd e2e && docker compose run --rm e2e sh -c "npm ci && node e2e/run.mjs v6:oxc"
+#   cd e2e && docker compose run --rm e2e sh -c "npm ci && node e2e/next/run.mjs"
 #
 # The repo root (parent of this file) is bind-mounted at /work so the container
 # runs against your live source. node_modules are kept in named volumes instead
@@ -16,6 +17,8 @@ services:
       - root_nm:/work/node_modules
       - e2e_nm:/work/e2e/node_modules
       - fixture_nm:/work/e2e/fixture/node_modules
+      # Next.js e2e: one fixture install per Next version (see e2e/next/run.mjs).
+      - next_work:/work/e2e/next/.work
     # CI=1 makes Playwright forbid `.only` and not reuse a stray dev server.
     environment:
       - CI=1
@@ -24,3 +27,4 @@ volumes:
   root_nm:
   e2e_nm:
   fixture_nm:
+  next_work:

@@ -3,6 +3,7 @@ name: e2e
 # Real end-to-end pipeline: pack the detector, install it into a real Vite app,
 # and run it in headless Chromium (with --expose-gc) to prove LIVE leak
 # detection across the @vitejs/plugin-react v5/v6 x engine oxc/babel matrix.
+# A second job does the same for Next.js (e2e/next/).
 # Runs inside a Docker container with the repo bind-mounted (see e2e/).
 on:
   push:
@@ -15,11 +16,24 @@ concurrency:
   group: e2e-${{ github.ref }}
   cancel-in-progress: true
 
+# Least privilege: checkout only needs to read the repo (upload-artifact uses
+# its own runtime token). Caps the token even if the repo/org default grants
+# write access, since these jobs run freshly installed third-party packages.
+permissions:
+  contents: read
+
 jobs:
   e2e:
     runs-on: ubuntu-latest
+    # Well above a normal run; stops a hung install/dev server from holding the
+    # runner for GitHub's 6-hour default. Tighten once real durations are known.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Nothing here pushes; keep the token out of .git/config, which is
+          # bind-mounted into the container that runs the installs.
+          persist-credentials: false
 
       - name: Run the leak-detector matrix in Docker
         # Builds the harness image (Node 22 + Playwright Chromium), bind-mounts
@@ -35,5 +49,33 @@ jobs:
           path: |
             e2e/playwright-report/
             e2e/test-results/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  e2e-next:
+    # Same harness, Next.js matrix: the packed detector in real Next 14, 15.3,
+    # 15.5 and 16 apps (webpack + Turbopack, App + Pages Router). Per combo:
+    # leak detection in headless Chromium, no dev-server errors, and a clean
+    # `next build`. See e2e/next/run.mjs.
+    runs-on: ubuntu-latest
+    # A full run took ~8.5 min outside CI (6 combos, fresh installs); CI adds
+    # the image build. Stops a hang well before GitHub's 6-hour default.
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Run the Next.js matrix in Docker
+        run: docker compose -f e2e/docker-compose.yml run --build --rm -T e2e sh -c "npm ci && node e2e/next/run.mjs"
+
+      - name: Upload Playwright report and server logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-next
+          path: |
+            e2e/next/test-results/
+            e2e/next/logs/
           if-no-files-found: ignore
           retention-days: 7

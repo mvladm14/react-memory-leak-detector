@@ -3,10 +3,11 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
-  "description": "End-to-end pipeline: installs the packed detector into a real Vite app and runs it in headless Chromium (with --expose-gc) to prove live leak detection across the plugin-react v5/v6 x oxc/babel matrix.",
+  "description": "End-to-end pipeline: installs the packed detector into a real Vite app and runs it in headless Chromium (with --expose-gc) to prove live leak detection across the plugin-react v5/v6 x oxc/babel matrix. `npm run test:next` runs the Next.js matrix (see next/run.mjs).",
   "scripts": {
     "test": "node run.mjs",
-    "test:combo": "playwright test"
+    "test:combo": "playwright test",
+    "test:next": "node next/run.mjs"
   },
   "devDependencies": {
     "@playwright/test": "^1.62.0"

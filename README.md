@@ -39,24 +39,63 @@ Dev-only by default, so nothing ships to production. Works with any
 `@vitejs/plugin-react` version (or none). Keep `heapMarkers()` before `react()` —
 it warns you at startup if the order is wrong.
 
-**Webpack / Next.js / Babel** — add the plugin to your Babel config, in development:
+**Next.js** — wrap your config:
+
+```ts
+// next.config.ts (or next.config.mjs)
+import withHeapMarkers from "react-memory-leak-detector/next";
+
+const nextConfig = {
+  /* your config */
+};
+
+export default withHeapMarkers(nextConfig);
+```
+
+No `.babelrc` needed, so Next keeps compiling with SWC (and `next/font` keeps
+working). Only the development browser bundle is instrumented: production builds
+and React Server Components are left untouched. Works with webpack and
+Turbopack. On Next 15.x, Turbopack only instruments files marked `"use client"`.
+Turbopack on Next 15.2 and earlier isn't supported; use webpack (`next dev`
+without `--turbopack`).
+
+**Webpack / Babel** — add the plugin to your Babel config, in development:
 
 ```json
 // .babelrc
 { "env": { "development": { "plugins": ["react-memory-leak-detector/babel-plugin"] } } }
 ```
 
+In a Next.js app, use the wrapper above instead. A `.babelrc` replaces Next's
+compiler setup: without `"presets": ["next/babel"]` nothing compiles, and under
+webpack it turns off SWC, which breaks `next/font`. If you already use Babel
+with Next, add the preset and, for the App Router,
+`["react-memory-leak-detector/babel-plugin", { "skipServerComponents": true }]`.
+
 ### 2. Import the runtime
 
 Load it once at the top of your app entry, in dev only:
 
 ```js
-// Vite
+// Vite: your entry file, e.g. src/main.tsx
 if (import.meta.env.DEV) import("react-memory-leak-detector/runtime");
 
-// Webpack / Next.js
+// Webpack: your entry file
 if (process.env.NODE_ENV === "development") import("react-memory-leak-detector/runtime");
 ```
+
+**Next.js** — the runtime must load in the browser. With Next 15.3+, put it in
+`instrumentation-client.ts` at the project root (next to `app/` or `pages/`):
+
+```ts
+// instrumentation-client.ts
+if (process.env.NODE_ENV === "development") import("react-memory-leak-detector/runtime");
+```
+
+On older versions, use the same line in `pages/_app.tsx` (Pages Router) or at the
+top of a `"use client"` component rendered by your root layout (App Router).
+Don't put it in `app/layout.tsx` itself: that's a Server Component, so the
+import never reaches the browser.
 
 That's it. Type declarations are bundled, so TypeScript needs no extra setup.
 
@@ -128,20 +167,23 @@ heapMarkers({
 });
 ```
 
+With Next.js, pass the same options as the second argument:
+`withHeapMarkers(nextConfig, { leakAgeMs: 5000 })`.
+
 Runtime options can also be changed live:
 `window.__heapTracker.configure({ leakAgeMs: 5000 })`.
 
 ## Compatibility
 
-| React feature                             | Status                                     |
-| ----------------------------------------- | ------------------------------------------ |
-| React 17 / 18 function components & hooks | ✅                                         |
-| React 18 concurrent, Suspense, StrictMode | ✅                                         |
-| SSR (effects no-op server-side)           | ✅                                         |
-| React Compiler                            | ✅ likely; warrants a CI snapshot test     |
-| `<Activity mode="hidden">`                | ⚠️ use `excludeUnmountTracking` to opt out |
-| React Server Components                   | ⚠️ use `skipServerComponents: true`        |
-| Class components                          | ❌ not instrumented (PRs welcome)          |
+| React feature                             | Status                                                                              |
+| ----------------------------------------- | ----------------------------------------------------------------------------------- |
+| React 17 / 18 function components & hooks | ✅                                                                                   |
+| React 18 concurrent, Suspense, StrictMode | ✅                                                                                   |
+| SSR (effects no-op server-side)           | ✅                                                                                   |
+| React Compiler                            | ✅ likely; warrants a CI snapshot test                                               |
+| `<Activity mode="hidden">`                | ⚠️ use `excludeUnmountTracking` to opt out                                          |
+| React Server Components                   | ✅ skipped by the Next.js wrapper; ⚠️ Babel plugin: use `skipServerComponents: true` |
+| Class components                          | ❌ not instrumented (PRs welcome)                                                    |
 
 <details>
 <summary>Advanced — all options, API, engines, and how it works</summary>
@@ -185,18 +227,22 @@ e.g. at the top of `main.tsx`) or live (`window.__heapTracker.configure({ … })
 Leak event shape: `{ component, stale, live, leakAgeMs, at }`. `component` matches
 the `ComponentName$Heap` marker in heap snapshots.
 
-### Engines (Vite plugin)
+### Engines (Vite plugin and Next.js wrapper)
 
-The Vite plugin injects markers with **Oxc** by default and falls back to
-**Babel** automatically if `oxc-parser` can't load — you normally don't touch
-this. Force one with `heapMarkers({ engine: "oxc" })` or `"babel"`. The Babel
+The Vite plugin and the Next.js wrapper inject markers with **Oxc** by default
+and fall back to **Babel** automatically if `oxc-parser` can't load — you
+normally don't touch this. `oxc-parser` is an optional dependency that needs
+Node ^20.19 or >=22.12; the Babel fallback needs `@babel/core` installed
+(Next.js apps often don't have it). If neither works, you get one error
+explaining both. Force one with `heapMarkers({ engine: "oxc" })` or `"babel"`. The Babel
 engine parses with Babel and reads no project config, so non-default syntax
 (decorators, `using`, import attributes) needs its parser opted in, e.g.
 `heapMarkers({ engine: "babel", parserPlugins: ["decorators-legacy"] })`; the Oxc
 engine parses these natively. `oxc-parser` needs Node ^20.19 or >=22.12.
 
 TypeScript option types are exported as `HeapMarkersOptions`
-(`/babel-plugin`) and `HeapMarkersViteOptions` (`/vite`).
+(`/babel-plugin`), `HeapMarkersViteOptions` (`/vite`) and
+`HeapMarkersNextOptions` (`/next`).
 
 ### How it works
 

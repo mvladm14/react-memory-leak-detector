@@ -7,6 +7,90 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-11-08
+
+### Added
+
+- **Next.js integration** at `react-memory-leak-detector/next`:
+  `export default withHeapMarkers(nextConfig, options)`. It runs the
+  heap-markers transform as a pre-loader (same Oxc/Babel engines as the Vite
+  plugin) and leaves Next's compiler alone, so no `.babelrc` is needed and SWC
+  stays on. Only the development browser compilation is instrumented, which
+  keeps production builds clean and never touches React Server Components.
+  Works with webpack (any Next version) and Turbopack (Next 16+; on Next
+  15.3–15.x Turbopack ignores the `browser` rule condition, so only
+  `"use client"` files are instrumented there). Accepts the Babel plugin's
+  options plus `engine`, `exclude`, `silent` and `parserPlugins`; typed as
+  `HeapMarkersNextOptions`. The function form of `next.config` is supported.
+
+### Fixed
+
+- **Next.js apps failed to compile when following the README.** Verified
+  against real Next 14, 15 and 16 apps (webpack and Turbopack, App and Pages
+  Router) driven in headless Chrome. Four separate problems:
+  - The documented `.babelrc` had no `"presets": ["next/babel"]`. A `.babelrc`
+    replaces Next's Babel setup, so every file failed with
+    `Support for the experimental syntax 'jsx' isn't currently enabled` /
+    `Unexpected token`. Even with the preset, the `.babelrc` disables SWC under
+    webpack, and the default create-next-app template then fails with
+    `"next/font" requires SWC although Babel is being used`. The README now uses
+    the new `/next` wrapper, and explains the preset and `skipServerComponents`
+    for apps that already use Babel.
+  - App Router Server Components that import from `react` received the injected
+    `useRef`/`useEffect` and failed with `You're importing a component that needs
+    useEffect… only works in a Client Component`. The wrapper never instruments
+    them.
+  - **Runtime could not be loaded by Node.** `dist/` is ESM, but the package has
+    no `"type": "module"` and the runtime used extensionless relative imports,
+    so loading it outside a bundler failed (`ERR_MODULE_NOT_FOUND: …/dist/config`
+    on Node 22, `SyntaxError` on Node 18). Next hits this whenever the import runs
+    on the server (`pages/_app.tsx`, SSR of a client component). The runtime now
+    uses fully specified imports and the build writes `dist/package.json` with
+    `{"type": "module"}`. Every `npm run build` then checks the result: it fails
+    unless `dist/package.json` declares `"type": "module"` and plain Node can
+    import `dist/runtime.js`.
+  - **`/runtime` types were not found with `moduleResolution: "node"`**, the
+    default tsconfig of Next 13/14 apps, so `next build` failed type checking on
+    the README's `import("react-memory-leak-detector/runtime")`. Added
+    `typesVersions` for the subpath.
+- **Oxc engine: directive prologues.** The Oxc engine spliced its `react` import
+  and runtime-config block in front of a file's `"use client"` directive, and the
+  marker in front of function-level directives (`"use no memo"`,
+  `"use strict"`). That demoted them to plain strings: with the Next.js wrapper
+  under webpack, Next rejects every instrumented Client Component (`The "use
+  client" directive must be placed before other expressions`), and a React
+  Compiler `"use no memo"` opt-out was ignored. Injected code now goes after the
+  prologue, matching the Babel engine.
+- **Misleading errors when the Oxc engine can't load.** The Oxc load error told
+  users to pass `engine: "babel"`, and the auto-detect fallback switched to
+  Babel, but `@babel/core` is an optional peer dependency that Next.js apps
+  usually lack. Every file then failed with `"@babel/core" is required when
+  using the "babel" engine` (an engine the user never chose), and when
+  `oxc-parser` wasn't installed at all, nothing mentioned Oxc. Now, when neither
+  engine can run, instrumented files fail with one error that names both
+  causes and both fixes (a supported Node version, or installing
+  `@babel/core`). The fallback warning no longer gives the `engine: "babel"`
+  advice. An explicit `engine: "oxc"` that can't load reports the Node version
+  and platform and says Babel requires `@babel/core`, and no longer prints
+  "using oxc engine" first.
+- README: the runtime import for Next.js goes in `instrumentation-client.ts`
+  (Next 15.3+), `pages/_app.tsx`, or a `"use client"` component. Placed in the
+  App Router's `app/layout.tsx` (a Server Component), it never ran in the
+  browser.
+
+### Internal
+
+- The Oxc-preferred/Babel-fallback engine selection moved from `vite.js` to
+  `lib/engine.js`, so the Vite plugin and Next.js loader share it. No
+  behavior change for Vite.
+- **Next.js e2e matrix** (`e2e/next/`, CI job `e2e-next`): the packed tarball in
+  real Next 14, 15.3, 15.5 and 16 apps across webpack and Turbopack, App and
+  Pages Router.
+  Per combo: live leak detection plus the no-false-positive check in headless
+  Chromium, Server Components left uninstrumented, no page or dev-server
+  errors, and a `next build` that type-checks and ships no markers. Each check
+  was confirmed to fail when the bug it guards against is reintroduced.
+
 ## [1.3.1] - 2026-10-23
 
 ### Fixed
@@ -223,7 +307,10 @@ leakAgeMs, at }` only for stale leaks (instances unmounted ≥ `leakAgeMs` ago
   `subscribers`, `sweep`) with `runtime.ts` as the entry that wires the API
   and starts the sweep loop. No change to the public surface.
 
-[Unreleased]: https://github.com/mvladm14/react-memory-leak-detector/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/mvladm14/react-memory-leak-detector/compare/v1.4.0...HEAD
+[1.4.0]: https://github.com/mvladm14/react-memory-leak-detector/compare/v1.3.1...v1.4.0
+[1.3.1]: https://github.com/mvladm14/react-memory-leak-detector/compare/v1.3.0...v1.3.1
+[1.3.0]: https://github.com/mvladm14/react-memory-leak-detector/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/mvladm14/react-memory-leak-detector/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/mvladm14/react-memory-leak-detector/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/mvladm14/react-memory-leak-detector/compare/v0.2.0...v1.0.0

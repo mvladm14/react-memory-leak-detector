@@ -1,7 +1,7 @@
 // Runtime configuration. Mutable so that `configure()` can hot-update behavior
 // (e.g. logging, thresholds, sweep cadence) without re-importing the module.
 
-import type { HeapTrackerOptions } from "./types";
+import type { HeapTrackerOptions } from "./types.js";
 
 export const _config: HeapTrackerOptions = {
   logging: true,

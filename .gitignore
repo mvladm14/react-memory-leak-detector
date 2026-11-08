@@ -12,6 +12,9 @@ dist/
 e2e/**/test-results/
 e2e/**/playwright-report/
 e2e/**/.last-run.json
+# Next.js e2e: per-version fixture installs + packed tarball, and server logs.
+e2e/next/.work/
+e2e/next/logs/
 # Transient lockfiles from a native (non-Docker) run; installs are fresh each run.
 e2e/package-lock.json
 e2e/fixture/package-lock.json

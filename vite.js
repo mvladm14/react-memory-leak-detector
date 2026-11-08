@@ -54,15 +54,7 @@
  *                   engine parses TS/JSX/decorators natively and ignores it).
  */
 
-let announced = false;
-
-function banner(name, silent) {
-  if (announced || silent) return;
-  announced = true;
-  // One line so users know which engine actually ran.
-  // eslint-disable-next-line no-console
-  console.log(`[react-memory-leak-detector] using "${name}" engine`);
-}
+const { createEngine } = require("./lib/engine");
 
 // React transform plugins that may compile JSX away before our markers run.
 const REACT_PLUGIN_NAMES = new Set([
@@ -115,79 +107,10 @@ function withOrderingGuard(plugin, silent) {
   return { ...plugin, configResolved: makeOrderingGuard(plugin.name, silent) };
 }
 
-/**
- * Resolves which engine to use. An explicit `engine` option wins; otherwise
- * prefer Oxc. Note this only checks that `oxc-parser` can be *resolved*; whether
- * it can actually be *loaded* (native binding present, Node new enough) is
- * discovered at transform time — see the auto-detect fallback below.
- */
-function resolveEngine(engine) {
-  if (engine === "oxc" || engine === "babel") return engine;
-  try {
-    require.resolve("oxc-parser");
-    return "oxc";
-  } catch {
-    return "babel";
-  }
-}
-
 module.exports = function heapMarkersVite(options = {}) {
-  const { engine, silent = false, ...rest } = options;
-  const explicit = engine === "oxc" || engine === "babel";
-  const chosen = resolveEngine(engine);
-
-  const makeBabel = () => require("./lib/engine-babel")(rest);
-
-  if (chosen === "babel") {
-    banner("babel", silent);
-    return withOrderingGuard(makeBabel(), silent);
-  }
-
-  const engineOxc = require("./lib/engine-oxc");
-  const oxc = engineOxc(rest);
-
-  // An explicit `engine: "oxc"` respects the caller's choice: surface load
-  // errors directly rather than silently switching engines.
-  if (explicit) {
-    banner("oxc", silent);
-    return withOrderingGuard(oxc, silent);
-  }
-
-  // Auto-detected Oxc. The docs promise a fall back to Babel if `oxc-parser`
-  // can't be *loaded* (unsupported Node, missing native binding) — not just if
-  // it can't be resolved. So wrap the transform: keep trying Oxc until a
-  // dependency-load failure, then switch permanently to Babel for this plugin
-  // instance. The banner is emitted only once we know which engine truly ran.
-  let usingBabel = false;
-  let babelFallback = null;
-  const getBabel = () => (babelFallback = babelFallback || makeBabel());
-
-  return withOrderingGuard({
-    name: oxc.name,
-    enforce: oxc.enforce,
-    apply: oxc.apply,
-    async transform(code, id) {
-      if (usingBabel) return getBabel().transform.call(this, code, id);
-      try {
-        const result = await oxc.transform.call(this, code, id);
-        // A non-null result proves the deps loaded and Oxc handled the file.
-        if (result != null) banner("oxc", silent);
-        return result;
-      } catch (err) {
-        if (!err || err.code !== engineOxc.OXC_UNAVAILABLE) throw err;
-        usingBabel = true;
-        if (!silent) {
-          // eslint-disable-next-line no-console
-          console.warn(
-            `[react-memory-leak-detector] "oxc" engine unavailable, ` +
-              `falling back to "babel". ${err.message}`,
-          );
-        }
-        banner("babel", silent);
-        return getBabel().transform.call(this, code, id);
-      }
-    },
-  }, silent);
+  // Engine selection (explicit, or Oxc with a Babel fallback) lives in
+  // ./lib/engine so the Next.js integration shares it.
+  return withOrderingGuard(createEngine(options), Boolean(options.silent));
 };
 
 module.exports.default = module.exports;
