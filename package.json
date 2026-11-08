@@ -7,6 +7,7 @@
     "memory-leak",
     "leak-detection",
     "heap-snapshot",
+    "nextjs",
     "babel-plugin",
     "devtools",
     "weakref",
@@ -15,6 +16,7 @@
   ],
   "scripts": {
     "build": "tsc",
+    "postbuild": "node scripts/mark-dist-esm.js && node scripts/check-dist.mjs",
     "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
     "typecheck": "tsc -p tsconfig.typecheck.json",
     "prepublishOnly": "npm test && npm run build && npm run typecheck"
@@ -23,6 +25,10 @@
     "./vite": {
       "types": "./vite.d.ts",
       "default": "./vite.js"
+    },
+    "./next": {
+      "types": "./next.d.ts",
+      "default": "./next.js"
     },
     "./babel-plugin": {
       "types": "./babel-plugin.d.ts",
@@ -33,9 +39,18 @@
       "default": "./dist/runtime.js"
     }
   },
+  "typesVersions": {
+    "*": {
+      "runtime": [
+        "./dist/runtime.d.ts"
+      ]
+    }
+  },
   "files": [
     "vite.js",
     "vite.d.ts",
+    "next.js",
+    "next.d.ts",
     "lib/",
     "babel-plugin.js",
     "babel-plugin.d.ts",
@@ -57,13 +72,17 @@
   "peerDependencies": {
     "react": ">=16.8.0",
     "vite": ">=4",
-    "@babel/core": "^7.23.0"
+    "@babel/core": "^7.23.0",
+    "next": ">=13"
   },
   "peerDependenciesMeta": {
     "vite": {
       "optional": true
     },
     "@babel/core": {
+      "optional": true
+    },
+    "next": {
       "optional": true
     }
   },

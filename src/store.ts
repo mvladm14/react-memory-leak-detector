@@ -6,7 +6,7 @@
 //                      `markMounted` / `markUnmounted` from the injected useEffect.
 // - `registry`       : when a marker is GC'd, drop its entry from `live`.
 
-import type { ComponentStats, LiveEntry } from "./types";
+import type { ComponentStats, LiveEntry } from "./types.js";
 
 export const live = new Set<LiveEntry>();
 export const stats = new Map<string, ComponentStats>();

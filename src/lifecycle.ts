@@ -16,8 +16,8 @@
 // constructor (`ComponentName$Heap`), the instance is tracked, and the
 // mount/unmount is then applied normally.
 
-import { getStats, instanceToEntry, live, registry } from "./store";
-import type { LiveEntry } from "./types";
+import { getStats, instanceToEntry, live, registry } from "./store.js";
+import type { LiveEntry } from "./types.js";
 
 const MARKER_SUFFIX = "$Heap";
 

@@ -2,8 +2,8 @@
 // a component's stale count crosses `suspectThreshold` and the per-component
 // `warnCooldownMs` has elapsed — same gating as the console warning.
 
-import { _config } from "./config";
-import type { LeakEvent, LeakListener } from "./types";
+import { _config } from "./config.js";
+import type { LeakEvent, LeakListener } from "./types.js";
 
 const listeners = new Set<LeakListener>();
 

@@ -11,12 +11,17 @@ const path = require("path");
 // absent), __tests__/gc-setup.ts exposes gc() per-worker via v8.setFlagsFromString.
 // So a plain `jest` invocation works — no --expose-gc and no --runInBand needed.
 
+// The runtime sources import siblings with explicit `.js` extensions (required
+// for the ESM build to load in Node); map them back to the .ts sources.
+const moduleNameMapper = { "^(\\.{1,2}/.*)\\.js$": "$1" };
+
 /** @type {import('jest').Config} */
 module.exports = {
   projects: [
     {
       displayName: "unit",
       testEnvironment: "jsdom",
+      moduleNameMapper,
       testMatch: ["**/__tests__/**/*.test.(js|ts|tsx)"],
       transform: {
         "^.+\\.tsx?$": [
@@ -37,6 +42,7 @@ module.exports = {
     {
       displayName: "gc",
       testEnvironment: "jsdom",
+      moduleNameMapper,
       testMatch: ["**/__tests__/**/*.gc.ts"],
       // Sets window.__heapTrackerOptions before the runtime loads, so its
       // one-time "tracker installed" console.info is suppressed for the suite.

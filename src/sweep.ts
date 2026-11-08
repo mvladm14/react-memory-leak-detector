@@ -4,10 +4,10 @@
 // stale-vs-live counts per component name. It's shared between `sweep` (which
 // fires warnings + listener events) and `report` (which returns a snapshot).
 
-import { _config } from "./config";
-import { getStats, live } from "./store";
-import { emitLeak, hasListeners } from "./subscribers";
-import type { ReportRow } from "./types";
+import { _config } from "./config.js";
+import { getStats, live } from "./store.js";
+import { emitLeak, hasListeners } from "./subscribers.js";
+import type { ReportRow } from "./types.js";
 
 function bucketLiveEntries(): Map<string, { stale: number; live: number }> {
   const now = Date.now();

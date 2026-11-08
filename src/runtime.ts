@@ -19,13 +19,13 @@
 // This file is the public entry: it assembles the api, installs it on window,
 // and runs the sweep loop.
 
-import { _config, configure, onSweepIntervalChange } from "./config";
-import { markMounted, markUnmounted, track } from "./lifecycle";
-import { forceGc, report, sweep } from "./sweep";
-import { subscribe } from "./subscribers";
-import type { HeapTrackerOptions } from "./types";
+import { _config, configure, onSweepIntervalChange } from "./config.js";
+import { markMounted, markUnmounted, track } from "./lifecycle.js";
+import { forceGc, report, sweep } from "./sweep.js";
+import { subscribe } from "./subscribers.js";
+import type { HeapTrackerOptions } from "./types.js";
 
-export type { LeakEvent, LeakListener, HeapTrackerOptions } from "./types";
+export type { LeakEvent, LeakListener, HeapTrackerOptions } from "./types.js";
 
 const api = {
   track,
