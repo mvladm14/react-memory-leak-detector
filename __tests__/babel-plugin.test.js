@@ -31,10 +31,18 @@ describe("babel-plugin-heap-markers", () => {
     const result = transform(code);
     
     // Check marker initialization
-    expect(result).toContain("var _heap_ref_ = __heap_useRef(null);");
-    expect(result).toContain("var _heap_ = _heap_ref_.current;");
-    expect(result).toContain("function MyComponent$Heap()");
-    expect(result).toContain('window.__heapTracker.track(_heap_ref_.current, "MyComponent")');
+    expect(result).toContain("const _heap_ = __heap_useRef(null);");
+    expect(result).toContain("if (_heap_.current === null) {");
+    expect(result).toContain("const _heap_m_ = new function MyComponent$Heap() {}();");
+    expect(result).toContain("_heap_.current = _heap_m_;");
+    expect(result).toContain('window.__heapTracker.track(_heap_m_, "MyComponent")');
+    // The React Compiler bails out on `var` and on reading a ref during
+    // render: no `var`, and `.current` is read only in the lazy-init check
+    // (render) and inside the effect and its cleanup.
+    expect(result).not.toMatch(/\bvar\b/);
+    expect(result).toContain("markMounted(_heap_.current)");
+    expect(result).toContain("markUnmounted(_heap_.current)");
+    expect((result.match(/_heap_\.current(?! =[^=])/g) || []).length).toBe(3);
 
     // Check nested closure injection
     expect(result).toContain("_heap_ && 0;");
@@ -191,7 +199,7 @@ describe("babel-plugin-heap-markers", () => {
 
 describe("default-parameter closures", () => {
   // A function with parameter expressions gets a separate environment for its
-  // params: closures created there CANNOT see the body's `var _heap_`. Injecting
+  // params: closures created there CANNOT see the body's `const _heap_`. Injecting
   // `_heap_ && 0` into a default-value closure therefore throws
   // `ReferenceError: _heap_ is not defined` the moment the default is invoked
   // (modules are strict). Default-callback props are a very common idiom, so
@@ -257,7 +265,7 @@ describe("default-parameter closures", () => {
     // defaults into the body, so Phase 2 can no longer tell from position
     // that they were params. The body binding `defaultLabel` shadows a name
     // used in the params, which makes the transform wrap the original body
-    // (and our `var _heap_`) in an IIFE while the lowered default stays
+    // (and our `const _heap_`) in an IIFE while the lowered default stays
     // outside — a capture there throws ReferenceError at render.
     const code = `
       import React from "react";
@@ -359,8 +367,32 @@ describe("default-parameter closures", () => {
     expect(text).toBe("function");
   });
 
+  it("same pass, a default invoked while params are evaluated doesn't hit _heap_'s TDZ", () => {
+    // Edge 15 targets lower default params into the body but keep `const`, so
+    // the lowered defaults sit ABOVE `const _heap_` in the same block. One that
+    // runs during param evaluation (`.map(cb)` calls cb right away) would throw
+    // "Cannot access '_heap_' before initialization" if it captured _heap_.
+    // ie 11 / chrome 100 bracket it: const lowered to var, params kept.
+    const code = `
+      import React from "react";
+      export function Item({ v = (() => 5)(), items = [1, 2].map((n) => n * 2) }) {
+        return <b>{v}:{items.join(",")}</b>;
+      }
+    `;
+    for (const targets of [{ edge: "15" }, { ie: 11 }, { chrome: "100" }]) {
+      const { out, text } = compileAndRender(code, targets);
+      expect(out).toContain("function Item$Heap()");
+      expect(text).toBe("5:2,4");
+    }
+    // Under Edge 15 the declaration really is `const` and really comes after
+    // the lowered defaults — the case this test exists for.
+    const { out } = compileAndRender(code, { edge: "15" });
+    expect(out).toMatch(/const _heap_ = /);
+    expect(out.indexOf("n * 2")).toBeLessThan(out.indexOf("const _heap_ = "));
+  });
+
   it("still captures defaults of nested non-instrumented functions", () => {
-    // `helper`'s params live INSIDE the component body, where `var _heap_` is
+    // `helper`'s params live INSIDE the component body, where `const _heap_` is
     // visible — so capturing there is both safe and wanted.
     const code = `
       import React from "react";

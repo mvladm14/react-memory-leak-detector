@@ -20,7 +20,7 @@ permissions:
 
 jobs:
   test:
-    name: Test (node version ${{ matrix.node-version }})
+    name: Test (node ${{ matrix.node-version }}, React ${{ matrix.react }})
     runs-on: ubuntu-latest
     # Install + test + build + typecheck take ~30 s locally; this only stops a
     # hang from holding the runner for GitHub's 6-hour default. Applies to each
@@ -32,6 +32,14 @@ jobs:
         # Engines field in package.json says node >= 16, but 16 is EOL.
         # 18 is the floor users in practice will run; 20 + 22 are current LTS.
         node-version: [18, 20, 22]
+        # devDependencies pin React 18; other legs swap React in after
+        # `npm ci`. The gc suites exercise StrictMode, Suspense, <Activity>
+        # (19.2+) and the React Compiler against whichever React is installed.
+        react: ["18", "19"]
+        # React 17 is still supported: one leg is enough to catch regressions.
+        include:
+          - node-version: 22
+            react: "17"
 
     steps:
       - uses: actions/checkout@v4
@@ -48,6 +56,15 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      # @testing-library/react 16 needs React 18+; 12 is the line for React 17.
+      - name: Use React ${{ matrix.react }}
+        if: matrix.react != '18'
+        run: >-
+          npm install --no-save
+          react@^${{ matrix.react }} react-dom@^${{ matrix.react }}
+          @types/react@^${{ matrix.react }} @types/react-dom@^${{ matrix.react }}
+          ${{ matrix.react == '17' && '@testing-library/react@^12' || '' }}
 
       - name: Run tests
         run: npm test

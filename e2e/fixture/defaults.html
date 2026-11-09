@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>leak-detector e2e fixture — default runtime options</title>
+    <!--
+      Same app as index.html, but WITHOUT window.__heapTrackerOptions: the
+      runtime runs with its defaults (leakAgeMs 10 s, a sweep every 2 s,
+      30 s warning cooldown), the way users run it. Used by
+      playwright/gc-lag.spec.ts, which also launches Chromium without
+      --expose-gc, so nothing forces a garbage collection.
+    -->
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

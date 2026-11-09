@@ -2,7 +2,8 @@ name: e2e
 
 # Real end-to-end pipeline: pack the detector, install it into a real Vite app,
 # and run it in headless Chromium (with --expose-gc) to prove LIVE leak
-# detection across the @vitejs/plugin-react v5/v6 x engine oxc/babel matrix.
+# detection across the @vitejs/plugin-react v5/v6 x engine oxc/babel x
+# React 17/18/19 matrix, plus React 19 with the React Compiler.
 # A second job does the same for Next.js (e2e/next/).
 # Runs inside a Docker container with the repo bind-mounted (see e2e/).
 on:
@@ -37,7 +38,7 @@ jobs:
 
       - name: Run the leak-detector matrix in Docker
         # Builds the harness image (Node 22 + Playwright Chromium), bind-mounts
-        # the repo, and runs all four combos. The image CMD does
+        # the repo, and runs all 14 combos. The image CMD does
         # `npm ci && node e2e/run.mjs`.
         run: docker compose -f e2e/docker-compose.yml run --build --rm -T e2e
 

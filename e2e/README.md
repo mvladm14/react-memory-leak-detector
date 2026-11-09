@@ -22,10 +22,24 @@ What it does, per run:
    README's fire-and-forget `import()` (so it arrives *after* the first render)
    and mounts a leaky component in the initial tree. Asserts the runtime adopts
    that component and still flags it after unmount.
+6. **Garbage-collection lag** (`playwright/gc-lag.spec.ts`, Playwright project
+   `chromium-no-gc`): the way users run it, with Chromium launched *without*
+   `--expose-gc` and the runtime on its default options (`/defaults.html`).
+   Mounts and unmounts the four fixed components and a leaky one, waits past
+   `leakAgeMs`, and asserts no fixed component was reported; then clicks
+   DevTools' "Collect garbage" (over the DevTools protocol) and asserts the
+   fixed components are gone and the leak is reported. If the browser already
+   freed the fixed components on its own before the check, the run can't show
+   anything and the test skips itself as inconclusive.
+
+   **Currently an expected failure** (`test.fail()`): the runtime reports
+   every instance still in memory after `leakAgeMs`, collected or not, so the
+   fixed components get reported (README: "Confirming a leak"). The fix must
+   delete the `test.fail()` line, and the test must then pass.
 
 ## The matrix
 
-Every combo runs the same spec:
+Every combo runs both specs:
 
 | `PLUGIN_REACT` | `HEAP_ENGINE` | exercises |
 | -------------- | ------------- | --------- |
@@ -33,6 +47,19 @@ Every combo runs the same spec:
 | `v5` | `babel` | Babel-based React transform + detector's Babel engine |
 | `v6` | `oxc` | Oxc-based React transform (v6) + detector's Oxc engine |
 | `v6` | `babel` | Oxc-based React transform (v6) + detector's Babel engine |
+
+Each of the four runs on React 17 (`v5:oxc:react17` …), React 18 (the
+fixture's own dependency, `v5:oxc` …) and React 19 (`v5:oxc:react19` …). Two
+more run React 19 with the React Compiler, through plugin-react v5's `babel`
+option (v6 has none): `v5:oxc:react19-compiler` and
+`v5:babel:react19-compiler`. That's 14 combos. `run.mjs` swaps React in the
+fixture between combos and restores React 18 at the end. React 17 has no
+`react-dom/client`, so the entries mount through `src/mount.tsx`
+(`createRoot`), which `vite.config.mjs` swaps for `src/mount-legacy.tsx`
+(`ReactDOM.render`) when the installed React is 17. The
+first spec test checks that the page really runs the expected React and, with
+the compiler, that the served component modules really are compiled (the
+compiler skips a function silently when it can't compile it).
 
 `@vitejs/plugin-react` v5 and v6 are both installed (as npm aliases
 `plugin-react-v5` / `plugin-react-v6`); `vite.config.mjs` picks one via
@@ -56,11 +83,14 @@ A single combo:
 cd e2e && docker compose run --build --rm e2e sh -c "npm ci && node e2e/run.mjs v6:oxc"
 ```
 
-Natively (needs Node ≥20.19 and a one-time `npx playwright install chromium`):
+Natively (needs Node ≥20.19 and a one-time `npx playwright install chromium`,
+or point `CHROMIUM_PATH` at a local Chromium):
 
 ```bash
 node e2e/run.mjs            # full matrix
 node e2e/run.mjs v6:oxc     # one combo
+node e2e/run.mjs v5:oxc:react17            # React 17 (legacy root)
+node e2e/run.mjs v5:oxc:react19-compiler   # React 19 + React Compiler
 SKIP_INSTALL=1 node e2e/run.mjs v5:babel   # reuse an already-prepared install
 ```
 
@@ -129,8 +159,10 @@ e2e/
   fixture/            self-contained Vite + React app (leaky + fixed components)
     index.html        runtime imported statically (src/main.tsx)
     late.html         runtime loaded via the README's dynamic import() (src/late.tsx)
-  playwright/         the leak spec
-  playwright.config.ts  launches Chromium with --expose-gc; boots the fixture dev server
+    defaults.html     as index.html, but with the runtime's default options
+    src/mount.tsx     mounts the app (createRoot); mount-legacy.tsx for React 17
+  playwright/         leak.spec.ts (with --expose-gc), gc-lag.spec.ts (without)
+  playwright.config.ts  two Chromium projects (with / without --expose-gc); boots the fixture dev server
   run.mjs             pack → install tarball → run the matrix
   next/
     fixture/          Next.js app (App + Pages Router) shared by every Next version

@@ -94,7 +94,7 @@ export function Widget() {
       "use no memo",
     ]);
     // The marker is still injected, right after the directive.
-    expect(widget.body.body[0].declarations[0].id.name).toBe("_heap_ref_");
+    expect(widget.body.body[0].declarations[0].id.name).toBe("_heap_");
 
     const helper = widget.body.body.find(
       (n) => n.type === "FunctionDeclaration" && n.id.name === "helper",

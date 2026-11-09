@@ -7,6 +7,78 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The React Compiler skipped every instrumented component in dev.** The
+  injected marker declared `var _heap_ref_` / `var _heap_` and read
+  `_heap_ref_.current` during render. The compiler bails out of a whole
+  function on either ("Handle var kinds in VariableDeclaration", "Cannot access
+  refs during render"), and does so silently by default. With the Vite plugin
+  and the Next.js wrapper, which run before the compiler, every instrumented
+  component and hook therefore ran uncompiled in dev while production ran
+  compiled code. (With the Babel plugin in the same Babel pass as the compiler,
+  the compiler runs first, so those setups were unaffected.) The marker is
+  still held in a `useRef`, now `const _heap_ = __heap_useRef(null)`, and the
+  render body reads `.current` only in the lazy-initialization check
+  (`if (_heap_.current === null) { … }`), the form the compiler allows.
+  Nested closures capture the ref itself (`_heap_ && 0;`, as before), which
+  holds the marker, and the unmount effect reads the marker from the ref when
+  it runs. Both engines emit it, and the compiler compiles the same functions
+  with and without instrumentation. `ComponentName$Heap` markers, the runtime
+  API and the heap-snapshot workflow are unchanged; in a snapshot's retainer
+  chain, a leaked closure now reaches the marker through the ref's `current`
+  property.
+  Since `const` has a temporal dead zone, the Babel plugin no longer captures
+  `_heap_` in closures placed *above* the declaration. `@babel/preset-env` puts
+  lowered default parameters there when a target lowers parameters but keeps
+  `const` (e.g. Edge 15); a default invoked during parameter evaluation
+  (`{ items = list.map((x) => x) }`) would otherwise throw. Such closures were
+  parameters in the source and, like other parameter closures, were never
+  meant to be captured.
+
+### Changed
+
+- **README and `package.json` no longer overstate detection.** The README
+  promised a warning "right away" and said "stale is the leak". Warnings come
+  `leakAgeMs` (10 s) after unmount, and a stale component is a *suspected* leak:
+  with default settings and no forced garbage collection, components that clean
+  up correctly were reported too, in headless Chrome, whenever the browser
+  hadn't collected them yet. The README now says so, adds a "Confirming a leak"
+  section (DevTools' **Collect garbage** or `forceGc()`, then `report()`), and
+  documents how `<Activity mode="hidden">` and the React Compiler interact with
+  detection, and a React 17 case a forced collection doesn't clear: after
+  unmounting a whole root, React 17 can keep the tree until its next render. The
+  `package.json` description no longer calls the package a Babel plugin (it also
+  ships Vite and Next.js integrations) and no longer claims leaks are caught
+  "the moment" they happen.
+
+### Internal
+
+- **E2E check for garbage-collection lag** (`e2e/playwright/gc-lag.spec.ts`):
+  runs the detector the way users do (Chromium without `--expose-gc`, default
+  runtime options) and asserts that components that cleaned up correctly are
+  not reported while they merely await collection, and that a real leak is
+  reported once DevTools' "Collect garbage" has run. It is marked as an expected
+  failure (`test.fail()`) until the runtime is fixed; runs where the browser
+  freed the components on its own skip themselves as inconclusive, so the check
+  can't pass or fail by luck. On the current runtime it failed as expected in all
+  14 Vite combos.
+
+- **React 17 and 19 coverage.** CI's unit/gc job now runs on React 18 and 19
+  (times Node 18/20/22), plus React 17 on Node 22. New real-GC suites cover
+  StrictMode, Suspense (hidden content and never-committed renders),
+  `<Activity>` on React 19.2+ (pinning the known false positive and the
+  `excludeUnmountTracking` workaround; skipped before 19.2, and a failure rather
+  than a silent skip if 19.2+ lacks the export), and leak detection on
+  components the React Compiler compiled, through the Oxc and Babel pre-passes
+  and the same-pass Babel plugin. A transform test fails if the compiler stops
+  compiling instrumented code. The Vite e2e matrix adds React 17 and React 19
+  for all four plugin-react × engine combos, plus React 19 with the React
+  Compiler (plugin-react v5), and checks that each combo really runs that React
+  and, with the compiler, serves compiled modules. For React 17 the fixture
+  mounts through a legacy-root (`ReactDOM.render`) twin of its mount module.
+  `CHROMIUM_PATH` now works for the Vite e2e as it does for the Next.js one.
+
 ## [1.4.0] - 2026-11-08
 
 ### Added

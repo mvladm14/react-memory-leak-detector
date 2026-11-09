@@ -3,7 +3,7 @@ import { expect, test } from "@playwright/test";
 // Labels the run with the matrix combo under test (set by run.mjs).
 const COMBO = `plugin-react ${process.env.PLUGIN_REACT || "v6"} / engine ${
   process.env.HEAP_ENGINE || "auto"
-}`;
+} / React ${process.env.REACT || "18"}${process.env.COMPILER ? " + compiler" : ""}`;
 
 // Shapes of the window hooks the fixture installs (see fixture/src/main.tsx).
 type LeakEvent = { component: string; stale: number; live: number };
@@ -17,6 +17,7 @@ declare global {
     __leakTest?: {
       events: LeakEvent[];
       trackerAtRender?: boolean;
+      reactVersion?: string;
       collect(
         cycles?: number,
       ): Promise<{ events: LeakEvent[]; report: ReportRow[] }>;
@@ -25,6 +26,36 @@ declare global {
 }
 
 test.describe(`live leak detection — ${COMBO}`, () => {
+  // Scenario guards: the combo really runs the React it claims and the app
+  // really renders on it, and with COMPILER=1 the components really are
+  // compiled. Rendering is checked here because a broken mount (e.g. React 17
+  // given the createRoot entry instead of src/mount-legacy.tsx) still installs
+  // the test hooks; without this check it would surface only as every later
+  // test timing out. The React Compiler skips a function silently when it
+  // can't compile it (our injected code once made it skip every instrumented
+  // component), so check the served module.
+  test("runs and renders the expected React, compiled when COMPILER is set", async ({ page, request }) => {
+    const pageErrors: string[] = [];
+    page.on("pageerror", (err) => pageErrors.push(err.message));
+
+    await page.goto("/");
+    await page.waitForFunction(() => !!window.__heapTracker && !!window.__leakTest);
+    const reactVersion = await page.evaluate(() => window.__leakTest!.reactVersion!);
+    expect(reactVersion.split(".")[0], COMBO).toBe(process.env.REACT || "18");
+
+    await expect(page.getByTestId("toggle-leaky"), `the app must render (${COMBO})`).toBeVisible({
+      timeout: 10_000,
+    });
+    expect(pageErrors, `no page errors (${COMBO})`).toEqual([]);
+
+    const module = await (await request.get("/src/components/LeakyTimer.tsx")).text();
+    expect(module, `LeakyTimer must be instrumented (${COMBO})`).toContain("LeakyTimer$Heap");
+    expect(
+      module.includes("react.memo_cache_sentinel"),
+      `LeakyTimer compiled by the React Compiler (${COMBO})`,
+    ).toBe(!!process.env.COMPILER);
+  });
+
   test("flags the leaky component and clears the fixed one", async ({
     page,
   }) => {
