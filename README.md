@@ -1,11 +1,16 @@
 # react-memory-leak-detector
 
-Catch React memory leaks the moment they happen — no heap snapshots required.
+Spot React memory leaks while you develop — no heap snapshot needed to find out
+*that* something leaked.
 
 When a component unmounts but something still holds onto it (a stray timer,
-listener, subscription, or closure), you get a **console warning** right away and
-a **leak event** you can forward to your own logger or Sentry. Dev-only — it
-compiles out of production builds.
+listener, subscription, or closure), you get a **console warning** about 10
+seconds later and a **leak event** you can forward to your own logger or Sentry.
+Warnings are *suspected* leaks: a component that was cleaned up correctly is
+reported too if the browser hasn't garbage-collected it yet. Forcing a
+garbage collection tells the two apart (see
+[Confirming a leak](#confirming-a-leak)). Dev-only — it compiles out of
+production builds.
 
 ## Install
 
@@ -115,8 +120,8 @@ if (import.meta.env.DEV) {
 
 ## Getting leaks
 
-On page load the tracker installs, and leaks show up as console warnings as they
-happen:
+On page load the tracker installs. Suspected leaks show up as console warnings
+about `leakAgeMs` (10 s by default) after the component unmounts:
 
 ```
 [heap-leak] Suspected leak: UserCard — 1 instance(s) unmounted >10s ago still retained (live 1 total)
@@ -126,7 +131,10 @@ Any time, run `window.__heapTracker.report()` for a live table of tracked
 components. Two numbers matter:
 
 - **live** — instances still in memory (mounted, or unmounted and not yet collected).
-- **stale** — unmounted more than `leakAgeMs` ago and *still* in memory. **Stale is the leak.**
+- **stale** — unmounted more than `leakAgeMs` ago and *still* in memory. Stale
+  means *suspected*: either something is holding the component (a leak), or the
+  garbage collector hasn't run since it unmounted. See
+  [Confirming a leak](#confirming-a-leak).
 
 Prefer to handle leaks yourself — a debug overlay, your logger, Sentry? Subscribe:
 
@@ -137,15 +145,39 @@ const unsubscribe = window.__heapTracker?.subscribe((event) => {
 });
 ```
 
-Events fire only for stale leaks and are debounced per component. The global
+Events fire only for stale components and are debounced per component. Like the
+warnings, they are suspected leaks, so some of what you forward will be
+garbage-collection lag rather than leaks. The global
 is typed as optional (it only exists once the runtime import has resolved), so
 subscribe from the import's `.then()` or anywhere after it — not on the line
 right after a fire-and-forget `import()`.
 `configure({ logging: false })` keeps the events but silences the console.
 
+## Confirming a leak
+
+The tracker can only see that an unmounted component is *still in memory*, not
+why. The browser frees memory only when its garbage collector runs, and an
+idle tab may not run it for a while, so a component that was cleaned up
+correctly can outlive `leakAgeMs` and be reported too. Raising `leakAgeMs` makes
+that less likely but doesn't rule it out.
+
+To tell the two apart, force a garbage collection, then look again:
+
+1. In Chrome DevTools → **Memory**, click **Collect garbage** (the trash-can
+   icon).
+2. Run `window.__heapTracker.report()`.
+
+Components still **stale** after a collection are really being held: that's
+your leak. Components that dropped out were only waiting to be collected.
+
+From code (a debug overlay, an automated test), start Chrome with
+`--js-flags="--expose-gc"` and call `window.__heapTracker.forceGc()`, which
+collects and re-sweeps in one step.
+
 ## Finding the cause
 
-A stale component tells you *what* leaked; a heap snapshot tells you *why*. In
+A stale component that survives a garbage collection tells you *what* leaked; a
+heap snapshot tells you *why*. In
 Chrome DevTools → Memory, take a snapshot and filter for `ComponentName$Heap`:
 
 ![Heap snapshot: LeakyTimeout$Heap instances retained, with the Retainers panel showing a DOMTimer holding them](docs/leaky-timeout-heapsnapshot.png)
@@ -160,7 +192,7 @@ All options are optional. The common ones, passed to the plugin:
 
 ```ts
 heapMarkers({
-  leakAgeMs: 10000,   // ms unmounted-but-retained before it counts as a leak
+  leakAgeMs: 10000,   // ms unmounted-but-retained before it's reported
   logging: true,      // console warnings on/off
   trackHooks: true,   // also track custom hooks, not just components
   excludeNames: [/^useTranslation$/], // component/hook names to skip entirely
@@ -175,15 +207,37 @@ Runtime options can also be changed live:
 
 ## Compatibility
 
-| React feature                             | Status                                                                              |
-| ----------------------------------------- | ----------------------------------------------------------------------------------- |
-| React 17 / 18 function components & hooks | ✅                                                                                   |
-| React 18 concurrent, Suspense, StrictMode | ✅                                                                                   |
-| SSR (effects no-op server-side)           | ✅                                                                                   |
-| React Compiler                            | ✅ likely; warrants a CI snapshot test                                               |
-| `<Activity mode="hidden">`                | ⚠️ use `excludeUnmountTracking` to opt out                                          |
-| React Server Components                   | ✅ skipped by the Next.js wrapper; ⚠️ Babel plugin: use `skipServerComponents: true` |
-| Class components                          | ❌ not instrumented (PRs welcome)                                                    |
+| React feature                                              | Status                                                                              |
+| ---------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| React 17 / 18 / 19 function components & hooks             | ✅ (React 17 root unmounts: see below)                                               |
+| Concurrent rendering, Suspense, StrictMode (React 18 / 19) | ✅                                                                                   |
+| SSR (effects no-op server-side)                            | ✅                                                                                   |
+| React Compiler (1.0)                                       | ✅ compiled as usual; see below                                                      |
+| `<Activity mode="hidden">` (React 19.2+)                   | ⚠️ hidden components are reported as leaks; see below                               |
+| React Server Components                                    | ✅ skipped by the Next.js wrapper; ⚠️ Babel plugin: use `skipServerComponents: true` |
+| Class components                                           | ❌ not instrumented (PRs welcome)                                                    |
+
+**React Compiler.** Instrumented components and hooks compile as usual. The
+compiler normally moves closures that use nothing from the component (an empty
+event handler, say) out to module scope. With the Vite plugin and the Next.js
+wrapper, the instrumentation runs first and keeps such closures in the
+component, so a missing cleanup is still reported. With the Babel plugin in the
+same Babel config as the compiler, the compiler runs first: those closures stay
+hoisted, no longer hold the component, and aren't reported.
+
+**React 17: unmounting a whole root.** After `ReactDOM.unmountComponentAtNode`,
+React 17 can keep that root's last tree in memory until it next renders
+something (seen under StrictMode and after a Suspense retry). Its components
+are then reported even though they cleaned up, and a forced garbage collection
+doesn't clear them; any later React render does. Components removed from an
+app that stays mounted, the normal case, aren't affected, and neither is
+React 18+.
+
+**`<Activity mode="hidden">`.** Hiding runs a component's effect cleanups but
+keeps it in memory, which looks exactly like a leak: once hidden for longer than
+`leakAgeMs`, it's reported, and that clears when it's shown again. List such
+components in `excludeUnmountTracking` to stop this. They stay searchable in
+heap snapshots, but are never reported, leaked or not.
 
 <details>
 <summary>Advanced — all options, API, engines, and how it works</summary>
@@ -251,8 +305,9 @@ TypeScript option types are exported as `HeapMarkersOptions`
    `useEffect` that reports mount/unmount.
 2. The runtime holds each marker in a `WeakRef` + `FinalizationRegistry` and
    sweeps periodically.
-3. If a marker is still reachable well after its component unmounted, something
-   is leaking it → warning + event.
+3. If a marker is still reachable `leakAgeMs` after its component unmounted →
+   warning + event. Either something is leaking it, or it hasn't been
+   garbage-collected yet (see [Confirming a leak](#confirming-a-leak)).
 
 </details>
 

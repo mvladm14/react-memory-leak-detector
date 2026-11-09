@@ -27,10 +27,9 @@ const COMPONENT = `
 // tracker and heap-snapshot workflow depend on.
 function expectMarkers(code, name) {
   expect(code).toContain(`function ${name}$Heap()`);
-  expect(code).toContain("var _heap_ = _heap_ref_.current;");
-  expect(code).toContain(
-    `window.__heapTracker.track(_heap_ref_.current, "${name}")`,
-  );
+  expect(code).toContain("const _heap_ = __heap_useRef(null);");
+  expect(code).toContain("_heap_.current = _heap_m_;");
+  expect(code).toContain(`window.__heapTracker.track(_heap_m_, "${name}")`);
 }
 
 describe("engine selection", () => {
@@ -115,8 +114,12 @@ describe("engine selection", () => {
     );
     for (const s of [
       "function MyComponent$Heap()",
-      "var _heap_ = _heap_ref_.current;",
-      '__heapTracker.track(_heap_ref_.current, "MyComponent")',
+      "const _heap_ = __heap_useRef(null);",
+      "if (_heap_.current === null) {",
+      "_heap_.current = _heap_m_;",
+      '__heapTracker.track(_heap_m_, "MyComponent")',
+      "markMounted(_heap_.current)",
+      "markUnmounted(_heap_.current)",
       "_heap_ && 0;",
     ]) {
       expect(oxc.code).toContain(s);
@@ -284,7 +287,7 @@ describeOxc("Oxc engine specifics", () => {
 
 describe("default-parameter closures (both engines)", () => {
   // Closures in an instrumented function's OWN parameter list can't see the
-  // body's `var _heap_` (parameter expressions get a separate environment), so
+  // body's `const _heap_` (parameter expressions get a separate environment), so
   // injecting `_heap_ && 0` there throws ReferenceError when the default runs.
   // Both engines must leave those closures alone and still capture body ones.
   const count = (code) => (code.match(/_heap_ && 0;/g) || []).length;

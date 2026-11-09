@@ -4,6 +4,23 @@ import { defineConfig, devices } from "@playwright/test";
 // fail loudly rather than silently drifting to another port.
 const PORT = Number(process.env.PORT) || 5173;
 
+/** Chromium launch options shared by both projects, plus `extra` args. */
+function launchOptions(extra: string[]) {
+  return {
+    // Optional: a locally installed Chromium, for machines that can't
+    // download Playwright's browser. CI uses the Docker image's browser.
+    executablePath: process.env.CHROMIUM_PATH || undefined,
+    args: [
+      ...extra,
+      // Chromium refuses to run as root (the default user in the container)
+      // without this; harmless when run natively as a normal user.
+      "--no-sandbox",
+      // Containers ship a tiny /dev/shm; without this Chromium can crash.
+      "--disable-dev-shm-usage",
+    ],
+  };
+}
+
 export default defineConfig({
   testDir: "./playwright",
   // GC is non-deterministic even when forced; give each spec room to poll.
@@ -15,20 +32,28 @@ export default defineConfig({
   use: {
     baseURL: `http://localhost:${PORT}`,
     trace: "retain-on-failure",
-    launchOptions: {
-      args: [
-        // Expose window.gc so the runtime's forceGc() can collect
-        // deterministically — without it the verdict depends on incidental GC.
-        "--js-flags=--expose-gc",
-        // Chromium refuses to run as root (the default user in the container)
-        // without this; harmless when run natively as a normal user.
-        "--no-sandbox",
-        // Containers ship a tiny /dev/shm; without this Chromium can crash.
-        "--disable-dev-shm-usage",
-      ],
-    },
   },
-  projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
+  projects: [
+    {
+      name: "chromium",
+      testIgnore: /gc-lag\.spec\.ts$/,
+      use: {
+        ...devices["Desktop Chrome"],
+        launchOptions: launchOptions([
+          // Expose window.gc so the runtime's forceGc() can collect
+          // deterministically — without it the verdict depends on incidental GC.
+          "--js-flags=--expose-gc",
+        ]),
+      },
+    },
+    {
+      // How users run it: no --expose-gc, so nothing forces a collection and
+      // the detector has to cope with garbage-collection lag on its own.
+      name: "chromium-no-gc",
+      testMatch: /gc-lag\.spec\.ts$/,
+      use: { ...devices["Desktop Chrome"], launchOptions: launchOptions([]) },
+    },
+  ],
   webServer: {
     // Boot the fixture's Vite dev server. PLUGIN_REACT / HEAP_ENGINE are already
     // in the environment (set by run.mjs per combo) and inherited here.

@@ -5,27 +5,30 @@
  * so they become identifiable in Chrome DevTools heap snapshots.
  *
  * How it works:
- * 1. At the top of each component body, injects a useRef-stabilized marker
- *    that survives across renders (one per component instance, not per
- *    render — otherwise the unmount effect's `[]` deps would only ever
- *    track render-1's marker and miss leaks anchored to later-render
- *    closures):
- *      var _heap_ref_ = __heap_useRef(null);
- *      if (_heap_ref_.current === null) {
- *        _heap_ref_.current = new (function ComponentName$Heap() {})();
- *        window.__heapTracker?.track(_heap_ref_.current, "ComponentName");
+ * 1. At the top of each component body, injects a useRef-held marker that
+ *    survives across renders (one per component instance, not per render —
+ *    otherwise the unmount effect's `[]` deps would only ever track
+ *    render-1's marker and miss leaks anchored to later-render closures):
+ *      const _heap_ = __heap_useRef(null);
+ *      if (_heap_.current === null) {
+ *        const _heap_m_ = new (function ComponentName$Heap() {})();
+ *        _heap_.current = _heap_m_;
+ *        window.__heapTracker?.track(_heap_m_, "ComponentName");
  *      }
- *      var _heap_ = _heap_ref_.current;
+ *    `_heap_` is the ref; the render body never reads `.current` beyond
+ *    that check, which keeps the React Compiler willing to compile it (see
+ *    injectMarkerVariable).
  *
  * 2. Into every nested closure (arrows, function expressions), injects:
  *      _heap_ && 0;
- *    This forces V8 to capture _heap_ in the closure's scope chain.
+ *    This forces V8 to capture _heap_ (the ref, which holds the marker) in
+ *    the closure's scope chain.
  *    (We use `_heap_ && 0` instead of `void _heap_` because esbuild
  *    strips void expressions as dead code.)
  *    Closures in the component's/hook's OWN parameter list (default values
  *    such as `{ onSelect = () => {} }`) are left alone: parameter
  *    expressions get their own environment and can't see the body's
- *    `var _heap_`, so capturing there would throw ReferenceError.
+ *    `const _heap_`, so capturing there would throw ReferenceError.
  *
  * If a closure leaks (e.g., useEffect without cleanup), the closure retains
  * _heap_, which retains the ComponentName$Heap instance. In heap snapshots:
@@ -133,7 +136,7 @@ module.exports = function babelPluginHeapMarkers({ types: t }, options = {}) {
   // (preset-env with old targets) that reuses the block stays deduplicated.
   const capturedClosures = new WeakSet();
   // The BlockStatements that received a marker, i.e. the blocks that declare
-  // `var _heap_`. Phase 2 captures a closure iff it sits lexically inside one
+  // `const _heap_`. Phase 2 captures a closure iff it sits lexically inside one
   // of these blocks (and no instrumented function node comes first on the way
   // up). That is exactly where `_heap_` is in scope, so it is the one rule
   // that stays correct whatever other plugins do in the same pass:
@@ -142,14 +145,23 @@ module.exports = function babelPluginHeapMarkers({ types: t }, options = {}) {
   //     parameter expressions get their own environment and can't see body
   //     vars, so a capture there would throw ReferenceError;
   //   • when @babel/preset-env lowers default params into the body, the
-  //     lowered closures land inside this block (capture is safe) — except
-  //     in the body-shadows-a-param-name case, where the transform wraps the
-  //     original block in an IIFE and puts the lowered defaults outside it:
-  //     the block object is reused as the IIFE body, so the rule still holds;
+  //     lowered closures land inside this block but BEFORE the `const _heap_`
+  //     declaration (see markerDeclarations): they stay uncaptured, like the
+  //     params they came from. In the body-shadows-a-param-name case the
+  //     transform instead wraps the original block in an IIFE and puts the
+  //     lowered defaults outside it: the block object is reused as the IIFE
+  //     body, so the rule still holds;
   //   • it doesn't depend on node identity or tags on the closure itself,
   //     which transforms like destructuring (cloneNode), shorthand-properties,
   //     classes and async-to-generator do not preserve.
   const markerBlocks = new WeakSet();
+  // The `const _heap_ = …` declarations themselves. A closure in a statement
+  // that precedes its block's declaration is not captured: preset-env puts
+  // lowered default params there, and a default invoked while the params are
+  // evaluated (`{ items = list.map((x) => x) }`) would read `_heap_` in its
+  // temporal dead zone and throw. (With targets that lower params but keep
+  // `const`, e.g. Edge 15.)
+  const markerDeclarations = new WeakSet();
 
   // Detection predicates are shared with the Oxc engine via ./lib/predicates so
   // the two engines can't drift. The file-gate helpers close over this plugin's
@@ -246,9 +258,9 @@ module.exports = function babelPluginHeapMarkers({ types: t }, options = {}) {
   const USE_REF_ALIAS = "__heap_useRef";
 
   /**
-   * Builds: window.__heapTracker && window.__heapTracker.<method>(_heap_)
+   * Builds: window.__heapTracker && window.__heapTracker.<method>(...args)
    */
-  function buildTrackerMemberCall(method, args = [t.identifier("_heap_")]) {
+  function buildTrackerMemberCall(method, args) {
     return t.expressionStatement(
       t.logicalExpression(
         "&&",
@@ -282,24 +294,33 @@ module.exports = function babelPluginHeapMarkers({ types: t }, options = {}) {
    * Builds the unmount-detection useEffect:
    *
    *   __heap_useEffect(() => {
-   *     window.__heapTracker && window.__heapTracker.markMounted(_heap_);
+   *     window.__heapTracker && window.__heapTracker.markMounted(_heap_.current);
    *     return () => {
-   *       window.__heapTracker && window.__heapTracker.markUnmounted(_heap_);
+   *       window.__heapTracker && window.__heapTracker.markUnmounted(_heap_.current);
    *     };
    *   }, []);
+   *
+   * The marker is read from the ref inside the effect and its cleanup (reading
+   * a ref there is fine for the React Compiler; during render it is not). The
+   * ref never changes after the lazy init, so both reads see the same marker.
+   * Reading it directly rather than through a `const` in the effect keeps the
+   * cleanup from capturing a new variable, which would cost an extra closure
+   * context per mounted instance.
    *
    * StrictMode double-invokes effects; the tracker handles that with a mount
    * counter, so we don't need any extra guards here.
    */
   function buildUnmountEffect() {
+    const marker = () =>
+      t.memberExpression(t.identifier("_heap_"), t.identifier("current"));
     const cleanup = t.arrowFunctionExpression(
       [],
-      t.blockStatement([buildTrackerMemberCall("markUnmounted")])
+      t.blockStatement([buildTrackerMemberCall("markUnmounted", [marker()])])
     );
     const effectBody = t.arrowFunctionExpression(
       [],
       t.blockStatement([
-        buildTrackerMemberCall("markMounted"),
+        buildTrackerMemberCall("markMounted", [marker()]),
         t.returnStatement(cleanup),
       ])
     );
@@ -321,33 +342,41 @@ module.exports = function babelPluginHeapMarkers({ types: t }, options = {}) {
    * plus the live-tracker registration and (unless opted out) an
    * unmount-detecting useEffect.
    *
-   * The marker is stabilized across renders via useRef: it's created once
-   * on first render and reused on every subsequent render. Without this,
-   * `var _heap_ = new (...)()` would re-run every render and only render-1's
-   * marker would receive markMounted/markUnmounted (the effect has `[]` deps),
-   * so leaks from later renders' closures would never trigger a live warning.
+   * The marker is held in a useRef: it's created once on first render and
+   * reused on every subsequent render. Without this, a marker created in the
+   * render body would be new every render and only render-1's marker would
+   * receive markMounted/markUnmounted (the effect has `[]` deps), so leaks
+   * from later renders' closures would never trigger a live warning.
    *
    * Generates:
-   *   var _heap_ref_ = __heap_useRef(null);
-   *   if (_heap_ref_.current === null) {
-   *     _heap_ref_.current = new (function ComponentName$Heap() {})();
+   *   const _heap_ = __heap_useRef(null);
+   *   if (_heap_.current === null) {
+   *     const _heap_m_ = new (function ComponentName$Heap() {})();
+   *     _heap_.current = _heap_m_;
    *     typeof window !== "undefined" && window.__heapTracker
-   *       && window.__heapTracker.track(_heap_ref_.current, "ComponentName");
+   *       && window.__heapTracker.track(_heap_m_, "ComponentName");
    *   }
-   *   var _heap_ = _heap_ref_.current;
    *   __heap_useEffect(() => {
-   *     window.__heapTracker && window.__heapTracker.markMounted(_heap_);
-   *     return () =>
-   *       window.__heapTracker && window.__heapTracker.markUnmounted(_heap_);
+   *     … markMounted(_heap_.current);
+   *     return () => … markUnmounted(_heap_.current);
    *   }, []);
    *
-   * `_heap_` keeps its original identifier so the Phase-2 `_heap_ && 0`
-   * injector continues to capture the (now stable) marker into nested
-   * closures unchanged.
+   * `_heap_` is the ref, not the marker: nested closures capture the ref
+   * (`_heap_ && 0`), which holds the marker, so a leaked closure still keeps
+   * `ComponentName$Heap` reachable. The render body never reads
+   * `_heap_.current` outside the lazy-initialization check. That, and `const`
+   * instead of `var`, is what the React Compiler requires: it refuses to
+   * compile a function that declares `var` ("Handle var kinds in
+   * VariableDeclaration") or reads `ref.current` during render ("Cannot access
+   * refs during render"), and it skips such functions silently. With the Vite
+   * plugin and the Next.js wrapper, our transform runs before the compiler, so
+   * an earlier version of this marker (which read the ref into a `var _heap_`)
+   * left every instrumented component uncompiled in dev. The
+   * `if (ref.current === null) ref.current = …` form is the lazy
+   * initialization the compiler explicitly allows.
    *
-   * The marker constructor is registered in markerConstructors WeakSet so
-   * the FunctionExpression visitor skips it. Closures inside the useEffect
-   * get processed by Phase-2 normally — harmless.
+   * The marker constructor is registered in markerConstructors, so Phase 2
+   * skips it.
    */
   function injectMarkerVariable(bodyPath, componentName, state) {
     // Signal to wrappers (e.g. the Vite plugin) that this file was actually
@@ -366,49 +395,44 @@ module.exports = function babelPluginHeapMarkers({ types: t }, options = {}) {
     // Register the marker constructor so it gets skipped by the FunctionExpression visitor
     markerConstructors.add(markerFnExpr);
 
-    // var _heap_ref_ = __heap_useRef(null);
-    const refDeclaration = t.variableDeclaration("var", [
+    // const _heap_ = __heap_useRef(null);
+    const heapDeclaration = t.variableDeclaration("const", [
       t.variableDeclarator(
-        t.identifier("_heap_ref_"),
+        t.identifier("_heap_"),
         t.callExpression(t.identifier(USE_REF_ALIAS), [t.nullLiteral()])
       ),
     ]);
 
-    // _heap_ref_.current
     const refCurrent = () =>
-      t.memberExpression(
-        t.identifier("_heap_ref_"),
-        t.identifier("current")
-      );
+      t.memberExpression(t.identifier("_heap_"), t.identifier("current"));
 
-    // _heap_ref_.current = new (function ComponentName$Heap() {})();
-    const assignMarker = t.expressionStatement(
-      t.assignmentExpression(
-        "=",
-        refCurrent(),
-        t.newExpression(markerFnExpr, [])
-      )
-    );
-
-    // typeof window !== "undefined" && window.__heapTracker
-    //   && window.__heapTracker.track(_heap_ref_.current, "ComponentName");
-    const trackerCall = buildTrackerMemberCall("track", [
-      refCurrent(),
-      t.stringLiteral(componentName),
-    ]);
-
-    // if (_heap_ref_.current === null) { _heap_ref_.current = new …; track(); }
+    // if (_heap_.current === null) {
+    //   const _heap_m_ = new (function ComponentName$Heap() {})();
+    //   _heap_.current = _heap_m_;
+    //   typeof window !== "undefined" && window.__heapTracker
+    //     && window.__heapTracker.track(_heap_m_, "ComponentName");
+    // }
     const initBlock = t.ifStatement(
       t.binaryExpression("===", refCurrent(), t.nullLiteral()),
-      t.blockStatement([assignMarker, trackerCall])
+      t.blockStatement([
+        t.variableDeclaration("const", [
+          t.variableDeclarator(
+            t.identifier("_heap_m_"),
+            t.newExpression(markerFnExpr, [])
+          ),
+        ]),
+        t.expressionStatement(
+          t.assignmentExpression("=", refCurrent(), t.identifier("_heap_m_"))
+        ),
+        buildTrackerMemberCall("track", [
+          t.identifier("_heap_m_"),
+          t.stringLiteral(componentName),
+        ]),
+      ])
     );
 
-    // var _heap_ = _heap_ref_.current;
-    const heapAlias = t.variableDeclaration("var", [
-      t.variableDeclarator(t.identifier("_heap_"), refCurrent()),
-    ]);
-
-    const statements = [refDeclaration, initBlock, heapAlias];
+    markerDeclarations.add(heapDeclaration);
+    const statements = [heapDeclaration, initBlock];
     // eslint-disable-next-line no-param-reassign
     state.needsHeapUseRefImport = true;
 
@@ -479,7 +503,7 @@ module.exports = function babelPluginHeapMarkers({ types: t }, options = {}) {
     if (capturedClosures.has(fnPath.node)) return false;
     if (capturedClosures.has(fnPath.node.body)) return false;
     // Walk up to the nearest ancestor that is either a block declaring
-    // `var _heap_` or an instrumented function node. Reaching the block first
+    // `const _heap_` or an instrumented function node. Reaching the block first
     // means the closure is lexically inside that function's body, where
     // `_heap_` is in scope: capture. Reaching the function node first means
     // the closure sits in its parameter list (default values), where body
@@ -489,7 +513,15 @@ module.exports = function babelPluginHeapMarkers({ types: t }, options = {}) {
     const anchor = fnPath.findParent(
       (p) => markerBlocks.has(p.node) || instrumentedFunctions.has(p.node)
     );
-    return anchor !== null && markerBlocks.has(anchor.node);
+    if (anchor === null || !markerBlocks.has(anchor.node)) return false;
+    // Inside the block, only statements after `const _heap_` may capture it
+    // (see markerDeclarations). If another plugin replaced the declaration
+    // node, it can't be found; capture as before.
+    const body = anchor.node.body;
+    const declIndex = body.findIndex((n) => markerDeclarations.has(n));
+    const statement = fnPath.findParent((p) => p.parentPath === anchor);
+    const stmtIndex = statement ? body.indexOf(statement.node) : -1;
+    return !(declIndex !== -1 && stmtIndex !== -1 && stmtIndex < declIndex);
   }
 
   return {

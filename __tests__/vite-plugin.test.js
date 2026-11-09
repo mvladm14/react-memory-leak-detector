@@ -40,9 +40,9 @@ describe("react-memory-leak-detector/vite", () => {
     const result = await transform(plugin, COMPONENT, "/app/src/MyComponent.tsx");
     expect(result).not.toBeNull();
     expect(result.code).toContain("function MyComponent$Heap()");
-    expect(result.code).toContain("var _heap_ = _heap_ref_.current;");
+    expect(result.code).toContain("const _heap_ = __heap_useRef(null);");
     expect(result.code).toContain(
-      'window.__heapTracker.track(_heap_ref_.current, "MyComponent")',
+      'window.__heapTracker.track(_heap_m_, "MyComponent")',
     );
     // nested closure capture
     expect(result.code).toContain("_heap_ && 0;");

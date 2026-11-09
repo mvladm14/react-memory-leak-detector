@@ -1,8 +1,7 @@
 /// <reference types="vite/client" />
 import React, { useState } from "react";
-import { flushSync } from "react-dom";
-import { createRoot } from "react-dom/client";
 import { LeakyTimer } from "./components/LeakyTimer";
+import { mountSync } from "./mount";
 
 // The "late runtime" entry (/late.html). Unlike main.tsx, which imports the
 // runtime statically, this entry installs it exactly the way the README does:
@@ -26,12 +25,10 @@ function LateApp() {
   );
 }
 
-// flushSync makes the initial render + commit synchronous, so by the next line
+// mountSync makes the initial render + commit synchronous, so by the next line
 // LeakyTimer has already rendered — deterministically before the dynamic
 // import above can resolve (a module fetch never completes synchronously).
-flushSync(() => {
-  createRoot(document.getElementById("root")!).render(<LateApp />);
-});
+mountSync(<LateApp />);
 const trackerAtRender = !!window.__heapTracker;
 
 // Test hooks (same shape as main.tsx). The module cache de-duplicates this
