@@ -1,35 +1,41 @@
 // Sweep, report, and forced-GC entry points.
 //
 // `bucketLiveEntries` walks the live set, drops GC'd entries, and tallies
-// stale-vs-live counts per component name. It's shared between `sweep` (which
-// fires warnings + listener events) and `report` (which returns a snapshot).
+// live / stale / awaiting-GC counts per component name. It's shared between
+// `sweep` (which fires warnings + listener events) and `report` (which
+// returns a snapshot).
+//
+// An instance unmounted for `leakAgeMs` is only *stale* (a leak) once a major
+// garbage collection has run since and left it in memory. Until then it is
+// `awaitingGc`: it may simply not have been collected yet. See witness.ts.
 
 import { _config } from "./config.js";
 import { getStats, live } from "./store.js";
 import { emitLeak, hasListeners } from "./subscribers.js";
 import type { ReportRow } from "./types.js";
+import { isOverAge, survivedGc, syncWitness } from "./witness.js";
 
-function bucketLiveEntries(): Map<string, { stale: number; live: number }> {
+type Bucket = { live: number; stale: number; awaitingGc: number };
+
+function bucketLiveEntries(): Map<string, Bucket> {
   const now = Date.now();
-  const perName = new Map<string, { stale: number; live: number }>();
+  const perName = new Map<string, Bucket>();
 
   live.forEach((entry) => {
     if (!entry.ref.deref()) {
       live.delete(entry);
       return;
     }
+    syncWitness(entry, now);
     let bucket = perName.get(entry.componentName);
     if (!bucket) {
-      bucket = { stale: 0, live: 0 };
+      bucket = { live: 0, stale: 0, awaitingGc: 0 };
       perName.set(entry.componentName, bucket);
     }
     bucket.live += 1;
-    if (
-      entry.unmountedAt != null &&
-      now - entry.unmountedAt >= _config.leakAgeMs
-    ) {
-      bucket.stale += 1;
-    }
+    if (!isOverAge(entry, now)) return;
+    if (survivedGc(entry)) bucket.stale += 1;
+    else bucket.awaitingGc += 1;
   });
 
   return perName;
@@ -47,7 +53,7 @@ export function sweep(): void {
       if (_config.logging) {
         // eslint-disable-next-line no-console
         console.warn(
-          `[heap-leak] Suspected leak: ${name} — ${bucket.stale} instance(s) unmounted >${_config.leakAgeMs / 1000}s ago still retained (live ${bucket.live} total)`,
+          `[heap-leak] Suspected leak: ${name} — ${bucket.stale} instance(s) unmounted >${_config.leakAgeMs / 1000}s ago still retained after garbage collection (live ${bucket.live} total)`,
         );
       }
       if (hasListeners()) {
@@ -74,6 +80,7 @@ export function report(): ReportRow[] {
       component: name,
       live: bucket.live,
       stale: bucket.stale,
+      awaitingGc: bucket.awaitingGc,
       lastRenderSecsAgo: Number(((now - s.lastRegisteredAt) / 1000).toFixed(1)),
     });
   });

@@ -18,11 +18,25 @@ What it does, per run:
    (leak event **and** console warning); mounts/unmounts a **fixed** twin and
    asserts it stays silent and is garbage-collected. The fixed twin is the
    false-positive guard.
-5. Loads a second entry, **`/late.html`**, that installs the runtime with the
+5. **One DevTools click is enough**: mounts and unmounts a leaky component ten
+   times, each unmount in a task of its own, then runs DevTools' "Collect
+   garbage" once (over the DevTools protocol) and asserts all ten instances
+   are reported.
+6. Loads a second entry, **`/late.html`**, that installs the runtime with the
    README's fire-and-forget `import()` (so it arrives *after* the first render)
-   and mounts a leaky component in the initial tree. Asserts the runtime adopts
-   that component and still flags it after unmount.
-6. **Garbage-collection lag** (`playwright/gc-lag.spec.ts`, Playwright project
+   and mounts a leaky and a fixed component in the initial tree. Asserts the
+   runtime adopts the leaky one and still flags it after unmount. For the fixed
+   one, it forces minor GCs (`gc({ type: "minor" })`) around its unmount and
+   asserts they alone never get it reported: only a major collection counts
+   as evidence (see `src/witness.ts`).
+7. **Collections around an unmount** (`playwright/gc-during-unmount.spec.ts`,
+   with `--expose-gc`, `leakAgeMs: 0`): forces minor, major, or both
+   collections synchronously inside the unmount, in a microtask after it, and
+   in the next task. It then sweeps without any further collection, and no
+   fixed component may be reported. A cleaned-up component survives minor
+   collections in Chrome (dead DOM-side records still point at it), so a
+   minor collection must never count as evidence.
+8. **Garbage-collection lag** (`playwright/gc-lag.spec.ts`, Playwright project
    `chromium-no-gc`): the way users run it, with Chromium launched *without*
    `--expose-gc` and the runtime on its default options (`/defaults.html`).
    Mounts and unmounts the four fixed components and a leaky one, waits past
@@ -30,16 +44,13 @@ What it does, per run:
    DevTools' "Collect garbage" (over the DevTools protocol) and asserts the
    fixed components are gone and the leak is reported. If the browser already
    freed the fixed components on its own before the check, the run can't show
-   anything and the test skips itself as inconclusive.
-
-   **Currently an expected failure** (`test.fail()`): the runtime reports
-   every instance still in memory after `leakAgeMs`, collected or not, so the
-   fixed components get reported (README: "Confirming a leak"). The fix must
-   delete the `test.fail()` line, and the test must then pass.
+   anything and the test skips itself as inconclusive. (Before the runtime
+   waited for a collection, this was an expected failure: every conclusive
+   run reported the fixed components.)
 
 ## The matrix
 
-Every combo runs both specs:
+Every combo runs all three specs:
 
 | `PLUGIN_REACT` | `HEAP_ENGINE` | exercises |
 | -------------- | ------------- | --------- |
@@ -161,7 +172,7 @@ e2e/
     late.html         runtime loaded via the README's dynamic import() (src/late.tsx)
     defaults.html     as index.html, but with the runtime's default options
     src/mount.tsx     mounts the app (createRoot); mount-legacy.tsx for React 17
-  playwright/         leak.spec.ts (with --expose-gc), gc-lag.spec.ts (without)
+  playwright/         leak.spec.ts + gc-during-unmount.spec.ts (with --expose-gc), gc-lag.spec.ts (without)
   playwright.config.ts  two Chromium projects (with / without --expose-gc); boots the fixture dev server
   run.mjs             pack → install tarball → run the matrix
   next/
@@ -197,4 +208,7 @@ sets `leakAgeMs: 0`, `warnCooldownMs: 0`, and an effectively-infinite
 `sweepIntervalMs` (via `window.__heapTrackerOptions` in `index.html`), and the
 spec calls `forceGc()` in cycles with a macrotask yield between each — a
 `WeakRef` target can't be reclaimed in the same turn it was last observed. This
-mirrors the recipe in `__tests__/real-leak.gc.ts`.
+mirrors the recipe in `__tests__/real-leak.gc.ts`. The runtime reports an
+instance only after a collection that ran once it was stale; with `leakAgeMs: 0`
+that is any collection after unmount (a component adopted on unmount needs a
+few), which the cycles provide.

@@ -1,7 +1,7 @@
 {
   "name": "react-memory-leak-detector",
-  "version": "1.4.1",
-  "description": "Dev-only React memory-leak detector. A Vite, Next.js or Babel plugin tags each component and hook with a named marker; a small runtime uses WeakRef + FinalizationRegistry to warn in the console, and emit events, when an unmounted component is still held in memory.",
+  "version": "1.4.2",
+  "description": "Dev-only React memory-leak detector. A Vite, Next.js or Babel plugin tags each component and hook with a named marker; a small runtime uses WeakRef + FinalizationRegistry to warn in the console, and emit events, when an unmounted component is still held in memory after a garbage collection.",
   "keywords": [
     "react",
     "memory-leak",

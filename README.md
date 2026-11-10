@@ -4,13 +4,12 @@ Spot React memory leaks while you develop — no heap snapshot needed to find ou
 *that* something leaked.
 
 When a component unmounts but something still holds onto it (a stray timer,
-listener, subscription, or closure), you get a **console warning** about 10
-seconds later and a **leak event** you can forward to your own logger or Sentry.
-Warnings are *suspected* leaks: a component that was cleaned up correctly is
-reported too if the browser hasn't garbage-collected it yet. Forcing a
-garbage collection tells the two apart (see
-[Confirming a leak](#confirming-a-leak)). Dev-only — it compiles out of
-production builds.
+listener, subscription, or closure), you get a **console warning** and a
+**leak event** you can forward to your own logger or Sentry. Only components
+still in memory after a garbage collection are reported. A component that
+was cleaned up correctly but not yet collected isn't (see
+[When leaks are reported](#when-leaks-are-reported)). Dev-only — it compiles
+out of production builds.
 
 ## Install
 
@@ -120,21 +119,23 @@ if (import.meta.env.DEV) {
 
 ## Getting leaks
 
-On page load the tracker installs. Suspected leaks show up as console warnings
-about `leakAgeMs` (10 s by default) after the component unmounts:
+On page load the tracker installs. A component is reported once it has been
+unmounted for `leakAgeMs` (10 s by default) *and* a garbage collection has run
+since without freeing it:
 
 ```
-[heap-leak] Suspected leak: UserCard — 1 instance(s) unmounted >10s ago still retained (live 1 total)
+[heap-leak] Suspected leak: UserCard — 1 instance(s) unmounted >10s ago still retained after garbage collection (live 1 total)
 ```
 
 Any time, run `window.__heapTracker.report()` for a live table of tracked
-components. Two numbers matter:
+components:
 
 - **live** — instances still in memory (mounted, or unmounted and not yet collected).
-- **stale** — unmounted more than `leakAgeMs` ago and *still* in memory. Stale
-  means *suspected*: either something is holding the component (a leak), or the
-  garbage collector hasn't run since it unmounted. See
-  [Confirming a leak](#confirming-a-leak).
+- **stale** — unmounted more than `leakAgeMs` ago and still in memory after a
+  garbage collection: something is holding them. These are the ones reported.
+- **awaitingGc** — unmounted more than `leakAgeMs` ago, but no garbage
+  collection has run since. They may just not have been collected yet, so
+  they aren't reported (yet).
 
 Prefer to handle leaks yourself — a debug overlay, your logger, Sentry? Subscribe:
 
@@ -146,39 +147,56 @@ const unsubscribe = window.__heapTracker?.subscribe((event) => {
 ```
 
 Events fire only for stale components and are debounced per component. Like the
-warnings, they are suspected leaks, so some of what you forward will be
-garbage-collection lag rather than leaks. The global
+warnings, they wait for a garbage collection, so components that are merely
+waiting to be collected don't reach your logger. The global
 is typed as optional (it only exists once the runtime import has resolved), so
 subscribe from the import's `.then()` or anywhere after it — not on the line
 right after a fire-and-forget `import()`.
 `configure({ logging: false })` keeps the events but silences the console.
 
-## Confirming a leak
+## When leaks are reported
 
-The tracker can only see that an unmounted component is *still in memory*, not
-why. The browser frees memory only when its garbage collector runs, and an
-idle tab may not run it for a while, so a component that was cleaned up
-correctly can outlive `leakAgeMs` and be reported too. Raising `leakAgeMs` makes
-that less likely but doesn't rule it out.
+The browser frees memory only when its garbage collector runs, and an idle tab
+may not run it for a while. Until then, a component that cleaned up correctly
+is still in memory just like a leaked one. So the tracker doesn't judge
+a component by being in memory `leakAgeMs` after unmount. It waits for the
+first *major* (full) garbage collection after that point, and reports the
+component only if that collection didn't free it.
 
-To tell the two apart, force a garbage collection, then look again:
+Minor collections, which browsers run far more often, don't count. In Chrome
+a cleared timer, a removed listener or a cancelled animation frame leaves a
+dead record in the browser's own heap that still points at the component, and
+minor collections treat it as live. A component that cleaned up correctly
+survives them all, until the next major collection frees it.
+
+Warnings can therefore come later than `leakAgeMs`: after the browser's next
+major collection, within one sweep (`sweepIntervalMs`, 2 s).
+Components waiting for that collection show up as **awaitingGc** in
+`report()`. To get a verdict right away:
 
 1. In Chrome DevTools → **Memory**, click **Collect garbage** (the trash-can
    icon).
-2. Run `window.__heapTracker.report()`.
+2. Wait for the next sweep, or run `window.__heapTracker.report()`.
 
-Components still **stale** after a collection are really being held: that's
-your leak. Components that dropped out were only waiting to be collected.
+One click judges every component that went stale before it, however many
+unmounted since the last collection.
 
 From code (a debug overlay, an automated test), start Chrome with
 `--js-flags="--expose-gc"` and call `window.__heapTracker.forceGc()`, which
 collects and re-sweeps in one step.
 
+Right after the page loads, the first verdicts also wait until the tracker has
+seen the browser collect garbage twice, usually within seconds.
+
+A reported component is really being held, though not always by a bug.
+Something may keep it on purpose (a cache), or React may (see
+[Compatibility](#compatibility)). The heap snapshot below shows what.
+
 ## Finding the cause
 
-A stale component that survives a garbage collection tells you *what* leaked; a
-heap snapshot tells you *why*. In
-Chrome DevTools → Memory, take a snapshot and filter for `ComponentName$Heap`:
+A reported component tells you *what* leaked; a heap snapshot tells you
+*why*. In Chrome DevTools → Memory, take a snapshot and filter for
+`ComponentName$Heap`:
 
 ![Heap snapshot: LeakyTimeout$Heap instances retained, with the Retainers panel showing a DOMTimer holding them](docs/leaky-timeout-heapsnapshot.png)
 
@@ -192,7 +210,7 @@ All options are optional. The common ones, passed to the plugin:
 
 ```ts
 heapMarkers({
-  leakAgeMs: 10000,   // ms unmounted-but-retained before it's reported
+  leakAgeMs: 10000,   // ms unmounted before a garbage collection can get it reported
   logging: true,      // console warnings on/off
   trackHooks: true,   // also track custom hooks, not just components
   excludeNames: [/^useTranslation$/], // component/hook names to skip entirely
@@ -235,7 +253,8 @@ React 18+.
 
 **`<Activity mode="hidden">`.** Hiding runs a component's effect cleanups but
 keeps it in memory, which looks exactly like a leak: once hidden for longer than
-`leakAgeMs`, it's reported, and that clears when it's shown again. List such
+`leakAgeMs` and through a garbage collection, it's reported, and that clears
+when it's shown again. List such
 components in `excludeUnmountTracking` to stop this. They stay searchable in
 heap snapshots, but are never reported, leaked or not.
 
@@ -258,7 +277,8 @@ heapMarkers({
 
   // ── runtime: how leaks are judged/reported (injected into the app) ──
   logging: true,                      // false = track silently, no console warnings
-  leakAgeMs: 10000,                   // age before an unmounted instance is "stale"
+  leakAgeMs: 10000,                   // unmounted this long, then still in memory
+                                      //   after a garbage collection = "stale"
   suspectThreshold: 1,                // min stale instances before warning/event
   sweepIntervalMs: 2000,              // how often the sweep runs
   warnCooldownMs: 30000,              // min gap between warnings for the same component
@@ -276,7 +296,7 @@ e.g. at the top of `main.tsx`) or live (`window.__heapTracker.configure({ … })
 | `subscribe(fn)` | Listen for stale-leak events; returns an unsubscribe function. |
 | `configure(opts)` | Update runtime options (e.g. `{ logging: false }`). |
 | `sweep()` | Force an immediate sweep (otherwise every `sweepIntervalMs`). |
-| `forceGc()` | `window.gc?.()` + re-sweep. Needs Chrome started with `--js-flags="--expose-gc"`; use it to rule out plain GC lag. |
+| `forceGc()` | `window.gc?.()` + re-sweep, to get a verdict without waiting for the browser to collect. Needs Chrome started with `--js-flags="--expose-gc"`. |
 
 Leak event shape: `{ component, stale, live, leakAgeMs, at }`. `component` matches
 the `ComponentName$Heap` marker in heap snapshots.
@@ -305,9 +325,14 @@ TypeScript option types are exported as `HeapMarkersOptions`
    `useEffect` that reports mount/unmount.
 2. The runtime holds each marker in a `WeakRef` + `FinalizationRegistry` and
    sweeps periodically.
-3. If a marker is still reachable `leakAgeMs` after its component unmounted →
-   warning + event. Either something is leaking it, or it hasn't been
-   garbage-collected yet (see [Confirming a leak](#confirming-a-leak)).
+3. When components have been unmounted for `leakAgeMs`, the runtime releases
+   a *witness*: an object it has held long enough to be in the old
+   generation, which only a major garbage collection frees. Nothing else
+   references it.
+4. Witness gone but marker still reachable → a major collection ran and
+   something kept the component: warning + event. Both still there → no
+   major collection yet, so no verdict (**awaitingGc**). See
+   [When leaks are reported](#when-leaks-are-reported).
 
 </details>
 

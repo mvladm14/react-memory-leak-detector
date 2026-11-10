@@ -380,4 +380,114 @@ test.describe(`live leak detection — ${COMBO}`, () => {
       `expected a console leak warning for LeakyTimer (${COMBO})`,
     ).toBe(true);
   });
+
+  // A cleaned-up component survives minor collections (scavenges) until the
+  // next major one: dead DOM-side records still point at its callbacks. The
+  // runtime must treat only a major collection as evidence (src/witness.ts).
+  // Checked here on a component rendered before the runtime loaded, adopted
+  // at unmount, with its marker promoted to the old generation first, the
+  // way an app shell's components would be. Forced minor GCs
+  // (gc({ type: "minor" }), needs --expose-gc) make it deterministic.
+  test("an adopted component that cleaned up is not reported after minor GCs alone", async ({
+    page,
+  }) => {
+    await page.goto("/late.html");
+    await page.waitForFunction(
+      () => !!window.__heapTracker && !!window.__leakTest,
+    );
+    expect(await page.evaluate(() => window.__leakTest!.trackerAtRender)).toBe(false);
+    await expect(page.getByTestId("fixed")).toBeVisible();
+
+    type MinorGc = (options: { type: "minor" }) => void;
+    /** Forced minor GCs, a macrotask apart (a WeakRef isn't cleared in the turn it was read). */
+    const minorGcs = (cycles: number) =>
+      page.evaluate(async (cycles) => {
+        const gc = (window as unknown as { gc: MinorGc }).gc;
+        for (let i = 0; i < cycles; i++) {
+          await new Promise((resolve) => setTimeout(resolve, 15));
+          gc({ type: "minor" });
+          await new Promise((resolve) => setTimeout(resolve, 15));
+          window.__heapTracker!.sweep();
+        }
+        return {
+          events: window.__leakTest!.events.slice() as LeakEvent[],
+          report: window.__heapTracker!.report(),
+        };
+      }, cycles);
+
+    // Promote FixedTimer's marker (rendered before the runtime loaded) to the
+    // old generation, then unmount it: the runtime adopts it.
+    await minorGcs(4);
+    await page.getByTestId("toggle-fixed").click();
+    await expect(page.getByTestId("fixed")).toHaveCount(0);
+
+    const afterMinor = await minorGcs(8);
+    // Scenario guard: minor GCs don't free the marker, so FixedTimer is still
+    // in memory here, stale (leakAgeMs 0). Counting a minor GC as evidence
+    // would get it reported.
+    expect(
+      afterMinor.report.find((r) => r.component === "FixedTimer"),
+      `FixedTimer must still be in memory after minor GCs (${COMBO})`,
+    ).toBeDefined();
+    expect(
+      afterMinor.events.some((e) => e.component === "FixedTimer"),
+      `FixedTimer must not be reported after minor GCs alone (${COMBO})`,
+    ).toBe(false);
+
+    // Full collections free it, still without a report.
+    const { events, report } = await page.evaluate(() => window.__leakTest!.collect(15));
+    expect(
+      report.some((r) => r.component === "FixedTimer"),
+      `FixedTimer must be GC'd — absent from report (${COMBO})`,
+    ).toBe(false);
+    expect(
+      events.some((e) => e.component === "FixedTimer"),
+      `FixedTimer must never be reported (${COMBO})`,
+    ).toBe(false);
+  });
+
+  // DevTools' "Collect garbage" must give a verdict in one click, however many
+  // separate unmounts came before it. The runtime needs an old-generation
+  // witness released after an instance goes stale (src/witness.ts). Taking a
+  // fresh one per unmount would empty its small stock after a few unmounts
+  // without a collection in between, and every later instance would wait
+  // through several more collections (clicks).
+  test("one Collect garbage click reports every leaked instance after a burst of unmounts", async ({
+    page,
+  }) => {
+    await page.goto("/");
+    await page.waitForFunction(
+      () => !!window.__heapTracker && !!window.__leakTest,
+    );
+    const BURST = 10;
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send("HeapProfiler.enable");
+    // A page that has been running a while: the witness stock is seasoned.
+    for (let i = 0; i < 3; i++) await cdp.send("HeapProfiler.collectGarbage");
+    await page.waitForTimeout(100);
+
+    // Mount and unmount LeakyTimer BURST times, each unmount in a task of its
+    // own, with nothing forcing a collection (no window.gc).
+    await page.evaluate(async (burst) => {
+      const toggle = () =>
+        (document.querySelector('[data-testid="toggle-leaky"]') as HTMLElement).click();
+      for (let i = 0; i < burst; i++) {
+        toggle(); // mount
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        toggle(); // unmount
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+    }, BURST);
+
+    await cdp.send("HeapProfiler.collectGarbage"); // the one click
+    await page.waitForTimeout(100);
+    const row = await page.evaluate(() => {
+      window.__heapTracker!.report(); // sweeps
+      return window.__heapTracker!.report().find((r) => r.component === "LeakyTimer");
+    });
+    expect(
+      row,
+      `all ${BURST} LeakyTimer instances reported after one click (${COMBO}): ${JSON.stringify(row)}`,
+    ).toMatchObject({ live: BURST, stale: BURST });
+  });
 });
