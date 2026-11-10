@@ -7,6 +7,73 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Components that cleaned up correctly were reported as leaks while they
+  waited to be garbage-collected.** The runtime reported every instance still
+  in memory `leakAgeMs` after unmount, whether or not a collection had run
+  since. An idle tab can go a long time without one, so correct components
+  reached the console and `subscribe()` listeners (and from there Sentry or
+  any other sink) as leaks. An instance is now reported only when a *major*
+  garbage collection that ran after it had been unmounted for `leakAgeMs`
+  left it in memory. The evidence is a *witness*: an object the runtime
+  holds until instances go stale, then releases. Witnesses are held through
+  two collections first, so they are in the old generation, which only a
+  major collection frees. A witness gone while a marker is still in memory
+  means a major collection ran and something holds the component. Minor
+  collections must not count. In Chrome, a cleared timer, a removed listener
+  or a cancelled animation frame leaves a dead record in Blink's heap that
+  still points at the component, and minor collections treat it as live. A
+  component that cleaned up correctly survives every minor collection until
+  the next major one. A first version of this fix allocated each witness with
+  its marker, and it was fooled by this. With a minor collection forced after
+  an unmount in Chromium, it reported all four fixed e2e components. Real
+  leaks are still reported: at the first major collection after `leakAgeMs`,
+  no longer at `leakAgeMs` itself. Clicking DevTools' **Collect garbage**, or
+  calling `forceGc()` with `--expose-gc`, gives a verdict right away. Instances
+  share the current witness for as long as it is still in memory, so one click
+  judges every instance that went stale before it. A witness per unmount would
+  empty the stock of old objects, and in an idle tab, after a burst of
+  unmounts, every instance past the third needed extra clicks.
+
+### Added
+
+- **`awaitingGc` column in `report()`**: instances unmounted for `leakAgeMs`
+  that no major collection has judged yet. `stale` now counts only instances
+  that survived one, and so does the `stale` field of leak events.
+
+### Changed
+
+- The console warning now reads "… still retained after garbage collection"
+  (the `Suspected leak: Name ` prefix is unchanged). The README's "Confirming
+  a leak" section is replaced by "When leaks are reported".
+
+### Internal
+
+- `e2e/playwright/gc-lag.spec.ts` is no longer an expected failure and passes.
+- New `e2e/playwright/gc-during-unmount.spec.ts` (Chromium, `--expose-gc`,
+  `leakAgeMs: 0`): forces minor, major, or both collections synchronously
+  inside the unmount, in a microtask after it, and in the next task. Then it
+  sweeps without any further collection, and no fixed component may be
+  reported. With young witnesses it fails on the minor collection in the next
+  task; the released version passes all cases.
+- New e2e test: ten leaked instances, each unmounted in a task of its own,
+  must all be reported after a single DevTools "Collect garbage" click. With a
+  witness per unmount, 3 of 10 were.
+- New `__tests__/gc-lag.gc.ts` (real collections in Node): nothing is
+  reported before a collection, and a collection that ran before the instance
+  went stale doesn't count. A new e2e test forces minor GCs on a component
+  adopted after a late runtime load. New unit tests cover the witness
+  bookkeeping.
+- Checked outside the suites with a stress script, not committed. It ran
+  Chromium without `--expose-gc` at `leakAgeMs: 0`, with allocation churn
+  that triggered up to 604 organic major collections per run (some runs with
+  `--stress-incremental-marking`). There were no false reports in 4,800
+  unmounts of the four fixed components, each unmount in its own task so
+  instances share a witness across tasks. The leaky component was reported
+  in every run. A young-witness build under the same conditions reported
+  every fixed component.
+
 ## [1.4.1] - 2026-11-09
 
 ### Fixed

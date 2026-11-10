@@ -54,14 +54,6 @@ test.describe(`garbage-collection lag, default options, no --expose-gc — ${COM
   }) => {
     test.setTimeout(FIRST_VERDICT_MS + 60_000);
 
-    // KNOWN BUG, to be fixed next: the runtime reports every instance still in
-    // memory leakAgeMs after unmount, whether or not a collection has run, so
-    // correctly cleaned-up components get reported. Until the fix, a
-    // conclusive run is an expected failure; once the runtime stops reporting
-    // them, Playwright fails this test as "expected to fail, but passed".
-    // Delete this line in the same change as the fix.
-    test.fail(true, "Known bug: reports components still awaiting garbage collection");
-
     const warnings: string[] = [];
     page.on("console", (msg) => {
       if (msg.type() === "warning" && msg.text().includes("Suspected leak")) {

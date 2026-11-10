@@ -1,5 +1,6 @@
 /// <reference types="vite/client" />
 import React, { useState } from "react";
+import { FixedTimer } from "./components/FixedTimer";
 import { LeakyTimer } from "./components/LeakyTimer";
 import { mountSync } from "./mount";
 
@@ -11,22 +12,29 @@ import { mountSync } from "./mount";
 // adopt them on their first mount/unmount it sees, or their leaks are lost.
 if (import.meta.env.DEV) import("react-memory-leak-detector/runtime");
 
-/** Mounts the leaky component in the INITIAL render; the button unmounts it. */
+/** Mounts a leaky and a fixed component in the INITIAL render; the buttons unmount them. */
 function LateApp() {
   const [leaky, setLeaky] = useState(true);
+  const [fixed, setFixed] = useState(true);
   return (
     <div>
       <h1>react-memory-leak-detector — e2e fixture (late runtime)</h1>
       <button data-testid="toggle-leaky" onClick={() => setLeaky((v) => !v)}>
         {leaky ? "Unmount" : "Mount"} LeakyTimer
       </button>
-      <div data-testid="stage">{leaky && <LeakyTimer />}</div>
+      <button data-testid="toggle-fixed" onClick={() => setFixed((v) => !v)}>
+        {fixed ? "Unmount" : "Mount"} FixedTimer
+      </button>
+      <div data-testid="stage">
+        {leaky && <LeakyTimer />}
+        {fixed && <FixedTimer />}
+      </div>
     </div>
   );
 }
 
 // mountSync makes the initial render + commit synchronous, so by the next line
-// LeakyTimer has already rendered — deterministically before the dynamic
+// both components have already rendered — deterministically before the dynamic
 // import above can resolve (a module fetch never completes synchronously).
 mountSync(<LateApp />);
 const trackerAtRender = !!window.__heapTracker;

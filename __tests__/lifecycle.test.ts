@@ -1,4 +1,4 @@
-import { loadRuntime, type RuntimeModules } from "./helpers";
+import { loadRuntime, simulateGc, type RuntimeModules } from "./helpers";
 
 describe("lifecycle", () => {
   let mods: RuntimeModules;
@@ -110,7 +110,7 @@ describe("lifecycle", () => {
       ).toBeGreaterThan(0);
     });
 
-    it("an adopted-on-unmount marker is reported as stale by sweep/report", () => {
+    it("an adopted-on-unmount marker is reported as stale by sweep/report once a collection ran", () => {
       mods.config.configure({
         leakAgeMs: 0,
         suspectThreshold: 1,
@@ -122,6 +122,11 @@ describe("lifecycle", () => {
 
       const instance = makeMarker("Layout");
       mods.lifecycle.markUnmounted(instance);
+      mods.sweep.sweep();
+      // No collection yet: it may just be uncollected.
+      expect(events).toEqual([]);
+
+      simulateGc(mods);
       mods.sweep.sweep();
 
       expect(events).toEqual(["Layout"]);

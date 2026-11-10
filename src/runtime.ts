@@ -3,7 +3,9 @@
 // The babel plugin injects `var _heap_ = new (function Foo$Heap(){})()` into
 // every component/hook in dev. This module wraps each marker in a WeakRef and
 // a FinalizationRegistry. A marker that survives well past its render means
-// some closure is still retaining it — i.e. a leak.
+// some closure is still retaining it — i.e. a leak. "Survives" means: still
+// reachable after a garbage collection that ran once it had been unmounted
+// for `leakAgeMs`. Before any collection, being in memory proves nothing.
 //
 // Importing this module installs `window.__heapTracker` and starts the sweep
 // loop. Intended to be loaded once at app boot in dev. See README.md.
@@ -14,6 +16,7 @@
 //   - store.ts        : live set, stats map, FinalizationRegistry
 //   - lifecycle.ts    : track / markMounted / markUnmounted
 //   - subscribers.ts  : subscribe / emitLeak (stale-leak pub-sub)
+//   - witness.ts      : proof a major collection ran since an instance went stale
 //   - sweep.ts        : sweep / report / forceGc
 //
 // This file is the public entry: it assembles the api, installs it on window,

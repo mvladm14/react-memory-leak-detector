@@ -18,6 +18,7 @@
 
 import { getStats, instanceToEntry, live, registry } from "./store.js";
 import type { LiveEntry } from "./types.js";
+import { syncWitness } from "./witness.js";
 
 const MARKER_SUFFIX = "$Heap";
 
@@ -29,6 +30,7 @@ function register(instance: object, componentName: string): LiveEntry {
     createdAt: now,
     mountCount: 0,
     unmountedAt: null,
+    witness: null,
   };
   live.add(entry);
   instanceToEntry.set(instance, entry);
@@ -66,17 +68,23 @@ export function markMounted(instance: object): void {
   const entry = instanceToEntry.get(instance) ?? adopt(instance);
   entry.mountCount += 1;
   entry.unmountedAt = null;
+  syncWitness(entry, Date.now());
 }
 
 export function markUnmounted(instance: object): void {
-  const entry = instanceToEntry.get(instance);
+  let entry = instanceToEntry.get(instance);
   if (!entry) {
     // First sighting is the unmount itself: the mount happened before the
     // runtime loaded. Adopt it as already-unmounted so the sweep can judge it.
-    adopt(instance).unmountedAt = Date.now();
-    return;
+    entry = adopt(instance);
+  } else {
+    if (entry.mountCount === 0) return;
+    entry.mountCount -= 1;
+    if (entry.mountCount !== 0) return;
   }
-  if (entry.mountCount === 0) return;
-  entry.mountCount -= 1;
-  if (entry.mountCount === 0) entry.unmountedAt = Date.now();
+  const now = Date.now();
+  entry.unmountedAt = now;
+  // With `leakAgeMs: 0` the instance is stale at once: give it its witness
+  // now, so a collection before the next sweep counts.
+  syncWitness(entry, now);
 }
